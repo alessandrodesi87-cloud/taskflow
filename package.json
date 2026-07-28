@@ -1,0 +1,43 @@
+{
+  "name": "task-manager-gantt",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:push": "supabase db push"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "next": "^14.2.3",
+    "typescript": "^5.4.5",
+    "@types/node": "^20.12.13",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "tailwindcss": "^3.4.3",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "@supabase/supabase-js": "^2.43.4",
+    "@supabase/auth-ui-react": "^0.4.8",
+    "@supabase/auth-ui-shared": "^0.1.8",
+    "framer-react-gantt": "^1.0.0",
+    "react-big-calendar": "^1.8.5",
+    "date-fns": "^3.6.0",
+    "lucide-react": "^0.408.0",
+    "clsx": "^2.1.1",
+    "class-variance-authority": "^0.7.0",
+    "axios": "^1.7.2",
+    "googleapis": "^140.0.0",
+    "google-auth-library": "^9.10.0",
+    "node-telegram-bot-api": "^0.65.0",
+    "resend": "^3.0.0",
+    "zod": "^3.23.8",
+    "zustand": "^4.4.7"
+  },
+  "devDependencies": {
+    "@types/node-telegram-bot-api": "^1.11.16"
+  }
+}
