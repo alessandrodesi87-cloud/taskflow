@@ -14,6 +14,10 @@ export default function DashboardPage() {
   const [showProjectModal, setShowProjectModal] = useState(false)
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [shareProject, setShareProject] = useState<Project | null>(null)
+  const [shareEmail, setShareEmail] = useState('')
+  const [shareRole, setShareRole] = useState<'member' | 'co-owner'>('member')
+  const [members, setMembers] = useState<any[]>([])
   const [errorMsg, setErrorMsg] = useState('')
   const router = useRouter()
 
@@ -110,6 +114,46 @@ export default function DashboardPage() {
     await loadData(user.id)
   }
 
+  const openShare = async (project: Project) => {
+    setShareProject(project)
+    setShareEmail('')
+    const { data } = await supabase
+      .from('project_members')
+      .select('id, role, user_id, users(email, full_name)')
+      .eq('project_id', project.id)
+    setMembers(data || [])
+  }
+
+  const handleShare = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorMsg('')
+    const { data: targetUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', shareEmail.trim().toLowerCase())
+      .single()
+    if (!targetUser) {
+      setErrorMsg(`Nessun utente trovato con email ${shareEmail}. Deve prima registrarsi.`)
+      return
+    }
+    const { error } = await supabase.from('project_members').insert({
+      project_id: shareProject!.id,
+      user_id: targetUser.id,
+      role: shareRole,
+    })
+    if (error) {
+      setErrorMsg(error.code === '23505' ? 'Utente già membro del progetto.' : `Errore: ${error.message}`)
+      return
+    }
+    await openShare(shareProject!)
+    setShareEmail('')
+  }
+
+  const handleRemoveMember = async (memberId: string) => {
+    await supabase.from('project_members').delete().eq('id', memberId)
+    if (shareProject) await openShare(shareProject)
+  }
+
   const handleTaskStatusChange = async (task: Task, status: Task['status']) => {
     await supabase.from('tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', task.id)
     setSelectedTask(null)
@@ -153,7 +197,16 @@ export default function DashboardPage() {
             <button onClick={() => setShowProjectModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Crea il primo progetto</button>
           </div>
         ) : (
-          <GanttChart projects={projects} tasks={tasks} onTaskClick={setSelectedTask} />
+          <>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {projects.map(p => (
+                <button key={p.id} onClick={() => openShare(p)} className="px-3 py-1.5 text-sm bg-white border rounded-full hover:bg-gray-100" title="Gestisci condivisione">
+                  {p.name} · 👥 Condividi
+                </button>
+              ))}
+            </div>
+            <GanttChart projects={projects} tasks={tasks} onTaskClick={setSelectedTask} />
+          </>
         )}
       </main>
 
@@ -229,6 +282,42 @@ export default function DashboardPage() {
                 <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded">Crea</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Condivisione Progetto */}
+      {shareProject && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold mb-1">Condividi "{shareProject.name}"</h3>
+            <p className="text-sm text-gray-500 mb-4">Invita un collega registrato inserendo la sua email</p>
+
+            <form onSubmit={handleShare} className="flex gap-2 mb-4">
+              <input type="email" value={shareEmail} onChange={e => setShareEmail(e.target.value)} placeholder="email@collega.it" className="flex-1 px-3 py-2 border rounded-md" required />
+              <select value={shareRole} onChange={e => setShareRole(e.target.value as any)} className="px-2 py-2 border rounded-md">
+                <option value="member">Member</option>
+                <option value="co-owner">Co-owner</option>
+              </select>
+              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">Invita</button>
+            </form>
+
+            <div className="space-y-2 mb-4 max-h-48 overflow-y-auto">
+              {members.length === 0 && <p className="text-sm text-gray-400">Nessun membro ancora</p>}
+              {members.map((m: any) => (
+                <div key={m.id} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium">{m.users?.full_name || m.users?.email}</p>
+                    <p className="text-xs text-gray-500">{m.users?.email} · {m.role}</p>
+                  </div>
+                  <button onClick={() => handleRemoveMember(m.id)} className="text-red-500 text-sm hover:underline">Rimuovi</button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end">
+              <button onClick={() => setShareProject(null)} className="px-4 py-2 bg-gray-200 rounded">Chiudi</button>
+            </div>
           </div>
         </div>
       )}
