@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { Project, Task } from '@/types'
@@ -11,45 +11,109 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState<any>(null)
+  const [showProjectModal, setShowProjectModal] = useState(false)
+  const [showTaskModal, setShowTaskModal] = useState(false)
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [errorMsg, setErrorMsg] = useState('')
   const router = useRouter()
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
+  // Form nuovo progetto
+  const [pName, setPName] = useState('')
+  const [pStart, setPStart] = useState(new Date().toISOString().split('T')[0])
+  const [pEnd, setPEnd] = useState('')
 
-        if (!session) {
-          router.push('/auth/login')
-          return
-        }
+  // Form nuovo task
+  const [tTitle, setTTitle] = useState('')
+  const [tDesc, setTDesc] = useState('')
+  const [tProject, setTProject] = useState('')
+  const [tStart, setTStart] = useState(new Date().toISOString().split('T')[0])
+  const [tDue, setTDue] = useState('')
+  const [tPriority, setTPriority] = useState<'low' | 'medium' | 'high'>('medium')
 
-        setUser(session.user)
+  const loadData = useCallback(async (userId: string) => {
+    const { data: projectsData } = await supabase
+      .from('projects')
+      .select('*')
+      .order('start_date', { ascending: true })
 
-        const { data: projectsData } = await supabase
-          .from('projects')
-          .select('*')
-          .or(`owner_id.eq.${session.user.id}`)
+    setProjects(projectsData || [])
 
-        if (projectsData) setProjects(projectsData)
-
-        const { data: tasksData } = await supabase
-          .from('tasks')
-          .select('*')
-
-        if (tasksData) setTasks(tasksData)
-      } catch (error) {
-        console.error('Error:', error)
-      } finally {
-        setLoading(false)
-      }
+    if (projectsData && projectsData.length > 0) {
+      const { data: tasksData } = await supabase
+        .from('tasks')
+        .select('*')
+        .in('project_id', projectsData.map(p => p.id))
+        .order('start_date', { ascending: true })
+      setTasks(tasksData || [])
+    } else {
+      setTasks([])
     }
+  }, [])
 
-    loadData()
-  }, [router])
+  useEffect(() => {
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        router.push('/auth/login')
+        return
+      }
+      setUser(session.user)
+      await loadData(session.user.id)
+      setLoading(false)
+    }
+    init()
+  }, [router, loadData])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/auth/login')
+  }
+
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorMsg('')
+    const { error } = await supabase.from('projects').insert({
+      name: pName,
+      start_date: pStart,
+      end_date: pEnd,
+      owner_id: user.id,
+    })
+    if (error) {
+      setErrorMsg(`Errore creazione progetto: ${error.message}`)
+      return
+    }
+    setShowProjectModal(false)
+    setPName(''); setPEnd('')
+    await loadData(user.id)
+  }
+
+  const handleCreateTask = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorMsg('')
+    const { error } = await supabase.from('tasks').insert({
+      project_id: tProject,
+      title: tTitle,
+      description: tDesc,
+      start_date: tStart,
+      due_date: tDue,
+      priority: tPriority,
+      status: 'todo',
+      owner_id: user.id,
+      creator_id: user.id,
+    })
+    if (error) {
+      setErrorMsg(`Errore creazione task: ${error.message}`)
+      return
+    }
+    setShowTaskModal(false)
+    setTTitle(''); setTDesc(''); setTDue('')
+    await loadData(user.id)
+  }
+
+  const handleTaskStatusChange = async (task: Task, status: Task['status']) => {
+    await supabase.from('tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', task.id)
+    setSelectedTask(null)
+    await loadData(user.id)
   }
 
   if (loading) {
@@ -60,29 +124,135 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold">TaskFlow</h1>
+          <h1 className="text-2xl font-bold text-blue-600">TaskFlow</h1>
           <div className="flex items-center gap-4">
-            <span className="text-gray-600">{user?.email}</span>
-            <button onClick={handleLogout} className="px-4 py-2 bg-red-600 text-white rounded">Logout</button>
+            <span className="text-gray-600 text-sm">{user?.email}</span>
+            <button onClick={handleLogout} className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300">Logout</button>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {errorMsg && (
+          <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">{errorMsg}</div>
+        )}
+
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-3xl font-bold">I tuoi Progetti</h2>
-          <button className="px-4 py-2 bg-blue-600 text-white rounded">+ Nuovo Progetto</button>
+          <div className="flex gap-3">
+            {projects.length > 0 && (
+              <button onClick={() => { setTProject(projects[0].id); setShowTaskModal(true) }} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">+ Nuovo Task</button>
+            )}
+            <button onClick={() => setShowProjectModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">+ Nuovo Progetto</button>
+          </div>
         </div>
 
         {projects.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-gray-500 mb-4">Non hai progetti ancora</p>
-            <button className="px-4 py-2 bg-blue-600 text-white rounded">Crea il primo progetto</button>
+          <div className="text-center py-12 bg-white rounded-lg shadow">
+            <p className="text-gray-500 mb-4">Non hai ancora progetti</p>
+            <button onClick={() => setShowProjectModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Crea il primo progetto</button>
           </div>
         ) : (
-          <GanttChart projects={projects} tasks={tasks} />
+          <GanttChart projects={projects} tasks={tasks} onTaskClick={setSelectedTask} />
         )}
       </main>
+
+      {/* Modal Nuovo Progetto */}
+      {showProjectModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold mb-4">Nuovo Progetto</h3>
+            <form onSubmit={handleCreateProject} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Nome progetto</label>
+                <input type="text" value={pName} onChange={e => setPName(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Data inizio</label>
+                  <input type="date" value={pStart} onChange={e => setPStart(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Data fine</label>
+                  <input type="date" value={pEnd} onChange={e => setPEnd(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button type="button" onClick={() => setShowProjectModal(false)} className="px-4 py-2 bg-gray-200 rounded">Annulla</button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">Crea</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Nuovo Task */}
+      {showTaskModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold mb-4">Nuovo Task</h3>
+            <form onSubmit={handleCreateTask} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Titolo</label>
+                <input type="text" value={tTitle} onChange={e => setTTitle(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Descrizione</label>
+                <textarea value={tDesc} onChange={e => setTDesc(e.target.value)} className="w-full px-3 py-2 border rounded-md" rows={2} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Progetto</label>
+                <select value={tProject} onChange={e => setTProject(e.target.value)} className="w-full px-3 py-2 border rounded-md" required>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Inizio</label>
+                  <input type="date" value={tStart} onChange={e => setTStart(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Scadenza</label>
+                  <input type="date" value={tDue} onChange={e => setTDue(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Priorità</label>
+                <select value={tPriority} onChange={e => setTPriority(e.target.value as any)} className="w-full px-3 py-2 border rounded-md">
+                  <option value="low">Bassa</option>
+                  <option value="medium">Media</option>
+                  <option value="high">Alta</option>
+                </select>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button type="button" onClick={() => setShowTaskModal(false)} className="px-4 py-2 bg-gray-200 rounded">Annulla</button>
+                <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded">Crea</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dettaglio Task */}
+      {selectedTask && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold mb-2">{selectedTask.title}</h3>
+            {selectedTask.description && <p className="text-gray-600 mb-4">{selectedTask.description}</p>}
+            <p className="text-sm text-gray-500 mb-4">
+              {selectedTask.start_date} → {selectedTask.due_date} · Priorità: {selectedTask.priority}
+            </p>
+            <div className="flex gap-2 mb-4">
+              <button onClick={() => handleTaskStatusChange(selectedTask, 'todo')} className={`px-3 py-1.5 rounded text-sm ${selectedTask.status === 'todo' ? 'bg-gray-600 text-white' : 'bg-gray-200'}`}>Da fare</button>
+              <button onClick={() => handleTaskStatusChange(selectedTask, 'in_progress')} className={`px-3 py-1.5 rounded text-sm ${selectedTask.status === 'in_progress' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>In corso</button>
+              <button onClick={() => handleTaskStatusChange(selectedTask, 'done')} className={`px-3 py-1.5 rounded text-sm ${selectedTask.status === 'done' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>Completato</button>
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => setSelectedTask(null)} className="px-4 py-2 bg-gray-200 rounded">Chiudi</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

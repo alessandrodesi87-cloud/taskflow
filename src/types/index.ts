@@ -1,82 +1,58 @@
-// User
+// Tipi allineati con il database (snake_case, come restituiti da Supabase)
+
 export interface User {
   id: string
-  email: string
-  fullName: string
-  telegramChatId?: string
+  email?: string
+  full_name?: string
+  telegram_chat_id?: string
   phone?: string
   role: 'admin' | 'member'
-  createdAt: string
+  created_at: string
 }
 
-// Project
 export interface Project {
   id: string
   name: string
   description?: string
-  ownerId: string
-  startDate: string
-  endDate: string
+  owner_id: string
+  start_date: string
+  end_date: string
   color?: string
-  createdAt: string
+  created_at: string
 }
 
 export interface ProjectMember {
   id: string
-  projectId: string
-  userId: string
+  project_id: string
+  user_id: string
   role: 'owner' | 'co-owner' | 'member'
-  addedAt: string
+  added_at: string
 }
 
-// Task
 export interface Task {
   id: string
-  projectId: string
+  project_id: string
   title: string
   description?: string
-  ownerId: string
-  creatorId: string
-  assigneeId?: string
-  startDate: string
-  dueDate: string
+  owner_id: string
+  creator_id: string
+  assignee_id?: string
+  start_date: string
+  due_date: string
   status: 'todo' | 'in_progress' | 'done'
   priority: 'low' | 'medium' | 'high'
   tags?: string[]
-  googleTaskId?: string
-  emailOrigin?: string
-  createdAt: string
-  updatedAt: string
+  google_task_id?: string
+  email_origin?: string
+  created_at: string
+  updated_at: string
 }
 
-// Attachment
 export interface Attachment {
   id: string
-  taskId: string
+  task_id: string
   filename: string
-  fileUrl: string
-  fileSize: number
-  uploadedAt: string
-}
-
-// Audit Log
-export interface AuditLog {
-  id: string
-  userId: string
-  action: string
-  entityType: string
-  entityId: string
-  changes?: Record<string, any>
-  createdAt: string
-}
-
-// Gmail Account
-export interface GmailAccount {
-  id: string
-  userId: string
-  email: string
-  accessToken: string
-  refreshToken: string
-  defaultProjectId: string
-  connectedAt: string
+  file_url: string
+  file_size: number
+  uploaded_at: string
 }
