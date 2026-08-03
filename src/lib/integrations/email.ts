@@ -1,18 +1,12 @@
 // Email integration with Resend
 // This will be used for daily reminders and task notifications
 
-import { Task, User } from '@/types'
+import { Task } from '@/types'
 import { supabase } from '@/lib/supabase'
-
-interface DailyReminderEmail {
-  user: User
-  tasks: Task[]
-  dueToday: Task[]
-}
 
 export async function sendDailyReminder(email: string, tasks: Task[]) {
   const today = new Date().toISOString().split('T')[0]
-  const dueTodayTasks = tasks.filter(t => t.dueDate === today && t.status !== 'done')
+  const dueTodayTasks = tasks.filter(t => t.due_date === today && t.status !== 'done')
 
   if (dueTodayTasks.length === 0) return
 
@@ -22,7 +16,7 @@ export async function sendDailyReminder(email: string, tasks: Task[]) {
       ${dueTodayTasks.map(t => `
         <li>
           <strong>${t.title}</strong><br/>
-          Progetto: ${t.projectId}<br/>
+          Progetto: ${t.project_id}<br/>
           Priority: ${t.priority}
         </li>
       `).join('')}

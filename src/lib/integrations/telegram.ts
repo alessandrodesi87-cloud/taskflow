@@ -1,7 +1,7 @@
 // Telegram Bot integration
 // For daily reminders and task management via Telegram
 
-import { Task, User } from '@/types'
+import { Task } from '@/types'
 import { supabase } from '@/lib/supabase'
 
 const TELEGRAM_API_URL = 'https://api.telegram.org'
@@ -9,7 +9,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 
 export async function sendTelegramReminder(chatId: string, tasks: Task[]) {
   const today = new Date().toISOString().split('T')[0]
-  const dueTodayTasks = tasks.filter(t => t.dueDate === today && t.status !== 'done')
+  const dueTodayTasks = tasks.filter(t => t.due_date === today && t.status !== 'done')
 
   if (dueTodayTasks.length === 0) return
 
@@ -18,7 +18,7 @@ export async function sendTelegramReminder(chatId: string, tasks: Task[]) {
   dueTodayTasks.forEach((task, idx) => {
     message += `${idx + 1}. *${task.title}*\n`
     message += `   Priority: ${task.priority}\n`
-    message += `   Scadenza: ${task.dueDate}\n\n`
+    message += `   Scadenza: ${task.due_date}\n\n`
   })
 
   message += '\nKomandi:\n'
@@ -44,8 +44,19 @@ export async function sendTelegramReminder(chatId: string, tasks: Task[]) {
   }
 }
 
-export async function processTelegramUpdate(update: any) {
+interface TelegramUpdate {
+  message?: {
+    text?: string
+    chat: {
+      id: number
+    }
+  }
+}
+
+export async function processTelegramUpdate(update: TelegramUpdate) {
   const message = update.message
+  if (!message) return
+
   const text = message.text || ''
   const chatId = message.chat.id
 
