@@ -19,6 +19,8 @@ export default function AdminPage() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserPassword, setNewUserPassword] = useState('')
+  const [accessToken, setAccessToken] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
   const router = useRouter()
 
   useEffect(() => {
@@ -30,27 +32,27 @@ export default function AdminPage() {
           return
         }
 
-        const { data: userData } = await supabase
-          .from('users')
-          .select('role')
-          .eq('id', session.user.id)
-          .single()
+        const response = await fetch('/api/admin/users', {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        })
 
-        if (userData?.role !== 'admin') {
+        if (response.status === 401) {
           router.push('/dashboard')
           return
         }
 
+        if (!response.ok) {
+          throw new Error('Impossibile caricare gli utenti')
+        }
+
+        const payload = await response.json()
+        setAccessToken(session.access_token)
+        setUsers(payload.users || [])
         setIsAdmin(true)
-
-        // Load all users
-        const { data: usersData } = await supabase
-          .from('users')
-          .select('*')
-
-        setUsers(usersData || [])
       } catch (error) {
-        console.error('Error:', error)
+        setErrorMessage(error instanceof Error ? error.message : 'Errore inatteso')
       } finally {
         setLoading(false)
       }
@@ -61,35 +63,38 @@ export default function AdminPage() {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault()
+    setErrorMessage('')
+
     try {
-      // Create auth user
-      const { data, error: authError } = await supabase.auth.admin.createUser({
-        email: newUserEmail,
-        password: newUserPassword,
-        email_confirm: true,
+      const response = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: newUserEmail,
+          password: newUserPassword,
+        }),
       })
 
-      if (authError) throw authError
-
-      // Create user profile
-      if (data.user) {
-        await supabase.from('users').insert({
-          id: data.user.id,
-          email: newUserEmail,
-          role: 'member',
-        })
-
-        // Reload users
-        const { data: usersData } = await supabase
-          .from('users')
-          .select('*')
-
-        setUsers(usersData || [])
-        setNewUserEmail('')
-        setNewUserPassword('')
+      const payload = await response.json()
+      if (!response.ok) {
+        throw new Error(payload.error || 'Impossibile creare l’utente')
       }
+
+      const usersResponse = await fetch('/api/admin/users', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      })
+      const usersPayload = await usersResponse.json()
+
+      setUsers(usersPayload.users || [])
+      setNewUserEmail('')
+      setNewUserPassword('')
     } catch (error) {
-      console.error('Error adding user:', error)
+      setErrorMessage(error instanceof Error ? error.message : 'Errore inatteso')
     }
   }
 
@@ -105,6 +110,12 @@ export default function AdminPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {errorMessage && (
+          <div className="mb-6 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        )}
+
         {/* Add new user */}
         <div className="bg-white rounded-lg shadow p-6 mb-8">
           <h2 className="text-xl font-bold mb-4">Aggiungi nuovo utente</h2>
@@ -115,6 +126,7 @@ export default function AdminPage() {
               onChange={(e) => setNewUserEmail(e.target.value)}
               placeholder="Email"
               className="flex-1 px-3 py-2 border border-gray-300 rounded-md"
+              minLength={10}
               required
             />
             <input

@@ -1,16 +1,6 @@
 // Google integration (Google Tasks + Gmail)
 
 import { supabase } from '@/lib/supabase'
-import { Task } from '@/types'
-
-interface GoogleTasksTask {
-  id: string
-  title: string
-  notes?: string
-  due?: string
-  status?: string
-  updated?: string
-}
 
 export async function linkGmailAccount(userId: string, email: string, accessToken: string, refreshToken: string) {
   // Store gmail account credentials
@@ -30,6 +20,8 @@ export async function linkGmailAccount(userId: string, email: string, accessToke
 
 export async function syncGoogleTasks(userId: string, projectId: string, accessToken: string) {
   try {
+    void projectId
+    void accessToken
     // Get tasks from Google Tasks API
     // This requires google-auth-library and googleapis
 
@@ -51,6 +43,8 @@ export async function syncGoogleTasks(userId: string, projectId: string, accessT
 
 export async function markTaskDoneInGoogle(googleTaskId: string, tasklistId: string, accessToken: string) {
   try {
+    void tasklistId
+    void accessToken
     // Mark task as done in Google Tasks
     // This requires the Google Tasks API
 
@@ -72,6 +66,7 @@ export async function markTaskDoneInGoogle(googleTaskId: string, tasklistId: str
 
 export async function getEmailsForTask(emailOrigin: string, accessToken: string) {
   try {
+    void accessToken
     // Fetch emails related to the task using Gmail API
     // This would search Gmail for emails matching the task origin
 
@@ -92,6 +87,9 @@ export async function getEmailsForTask(emailOrigin: string, accessToken: string)
 
 export async function importTasksFromGmail(userId: string, gmailEmail: string, accessToken: string, defaultProjectId: string) {
   try {
+    void userId
+    void accessToken
+    void defaultProjectId
     // Search for tasks in Gmail (e.g., emails with [TASK] label)
     // Create tasks from matching emails
 

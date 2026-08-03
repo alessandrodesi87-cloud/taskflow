@@ -19,7 +19,7 @@ export default function SignupPage() {
     setError('')
 
     try {
-      const { data, error: signupError } = await supabase.auth.signUp({
+      const { error: signupError } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -28,13 +28,6 @@ export default function SignupPage() {
       })
 
       if (signupError) throw signupError
-
-      if (data.user) {
-        await supabase.from('users').insert({
-          id: data.user.id,
-          full_name: fullName,
-        })
-      }
 
       router.push('/auth/login?message=Registrazione completata. Accedi per continuare.')
     } catch (err) {

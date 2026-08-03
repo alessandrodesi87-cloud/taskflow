@@ -5,19 +5,30 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { Project, Task } from '@/types'
 import GanttChart from '@/components/gantt/GanttChart'
+import type { User as AuthUser } from '@supabase/supabase-js'
+
+interface ProjectMemberWithUser {
+  id: string
+  role: 'owner' | 'co-owner' | 'member'
+  user_id: string
+  users: {
+    email?: string
+    full_name?: string
+  } | null
+}
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<AuthUser | null>(null)
   const [showProjectModal, setShowProjectModal] = useState(false)
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [shareProject, setShareProject] = useState<Project | null>(null)
   const [shareEmail, setShareEmail] = useState('')
   const [shareRole, setShareRole] = useState<'member' | 'co-owner'>('member')
-  const [members, setMembers] = useState<any[]>([])
+  const [members, setMembers] = useState<ProjectMemberWithUser[]>([])
   const [errorMsg, setErrorMsg] = useState('')
   const router = useRouter()
 
@@ -34,7 +45,7 @@ export default function DashboardPage() {
   const [tDue, setTDue] = useState('')
   const [tPriority, setTPriority] = useState<'low' | 'medium' | 'high'>('medium')
 
-  const loadData = useCallback(async (userId: string) => {
+  const loadData = useCallback(async () => {
     const { data: projectsData } = await supabase
       .from('projects')
       .select('*')
@@ -62,7 +73,7 @@ export default function DashboardPage() {
         return
       }
       setUser(session.user)
-      await loadData(session.user.id)
+      await loadData()
       setLoading(false)
     }
     init()
@@ -76,6 +87,11 @@ export default function DashboardPage() {
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault()
     setErrorMsg('')
+    if (!user) {
+      setErrorMsg('Sessione scaduta. Accedi di nuovo.')
+      return
+    }
+
     const { error } = await supabase.from('projects').insert({
       name: pName,
       start_date: pStart,
@@ -88,12 +104,17 @@ export default function DashboardPage() {
     }
     setShowProjectModal(false)
     setPName(''); setPEnd('')
-    await loadData(user.id)
+    await loadData()
   }
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault()
     setErrorMsg('')
+    if (!user) {
+      setErrorMsg('Sessione scaduta. Accedi di nuovo.')
+      return
+    }
+
     const { error } = await supabase.from('tasks').insert({
       project_id: tProject,
       title: tTitle,
@@ -111,7 +132,7 @@ export default function DashboardPage() {
     }
     setShowTaskModal(false)
     setTTitle(''); setTDesc(''); setTDue('')
-    await loadData(user.id)
+    await loadData()
   }
 
   const openShare = async (project: Project) => {
@@ -121,7 +142,7 @@ export default function DashboardPage() {
       .from('project_members')
       .select('id, role, user_id, users(email, full_name)')
       .eq('project_id', project.id)
-    setMembers(data || [])
+    setMembers((data || []) as unknown as ProjectMemberWithUser[])
   }
 
   const handleShare = async (e: React.FormEvent) => {
@@ -157,7 +178,7 @@ export default function DashboardPage() {
   const handleTaskStatusChange = async (task: Task, status: Task['status']) => {
     await supabase.from('tasks').update({ status, updated_at: new Date().toISOString() }).eq('id', task.id)
     setSelectedTask(null)
-    await loadData(user.id)
+    await loadData()
   }
 
   if (loading) {
@@ -271,7 +292,7 @@ export default function DashboardPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Priorità</label>
-                <select value={tPriority} onChange={e => setTPriority(e.target.value as any)} className="w-full px-3 py-2 border rounded-md">
+                <select value={tPriority} onChange={e => setTPriority(e.target.value as 'low' | 'medium' | 'high')} className="w-full px-3 py-2 border rounded-md">
                   <option value="low">Bassa</option>
                   <option value="medium">Media</option>
                   <option value="high">Alta</option>
@@ -290,12 +311,12 @@ export default function DashboardPage() {
       {shareProject && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-bold mb-1">Condividi "{shareProject.name}"</h3>
+            <h3 className="text-xl font-bold mb-1">Condividi &ldquo;{shareProject.name}&rdquo;</h3>
             <p className="text-sm text-gray-500 mb-4">Invita un collega registrato inserendo la sua email</p>
 
             <form onSubmit={handleShare} className="flex gap-2 mb-4">
               <input type="email" value={shareEmail} onChange={e => setShareEmail(e.target.value)} placeholder="email@collega.it" className="flex-1 px-3 py-2 border rounded-md" required />
-              <select value={shareRole} onChange={e => setShareRole(e.target.value as any)} className="px-2 py-2 border rounded-md">
+              <select value={shareRole} onChange={e => setShareRole(e.target.value as 'member' | 'co-owner')} className="px-2 py-2 border rounded-md">
                 <option value="member">Member</option>
                 <option value="co-owner">Co-owner</option>
               </select>
@@ -304,7 +325,7 @@ export default function DashboardPage() {
 
             <div className="space-y-2 mb-4 max-h-48 overflow-y-auto">
               {members.length === 0 && <p className="text-sm text-gray-400">Nessun membro ancora</p>}
-              {members.map((m: any) => (
+              {members.map((m) => (
                 <div key={m.id} className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
                   <div>
                     <p className="text-sm font-medium">{m.users?.full_name || m.users?.email}</p>
