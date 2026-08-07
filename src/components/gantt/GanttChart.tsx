@@ -1,6 +1,8 @@
 'use client'
 
 import {
+  useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -140,8 +142,8 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
       return { minDate: today, maxDate: today, days: 1 }
     }
 
-    const minDate = min(dates)
-    const maxDate = max(dates)
+    const minDate = min([...dates, today])
+    const maxDate = max([...dates, today])
 
     return {
       minDate,
@@ -235,7 +237,7 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
     }
   }
 
-  const locateToday = () => {
+  const locateToday = useCallback((behavior: ScrollBehavior = 'smooth') => {
     if (todayIndex === undefined || !scrollContainerRef.current) return
 
     const visibleTimelineWidth = Math.max(
@@ -247,9 +249,17 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
 
     scrollContainerRef.current.scrollTo({
       left: Math.max(target, 0),
-      behavior: 'smooth',
+      behavior,
     })
-  }
+  }, [dayWidth, todayIndex])
+
+  useEffect(() => {
+    const animationFrame = window.requestAnimationFrame(() => {
+      locateToday('auto')
+    })
+
+    return () => window.cancelAnimationFrame(animationFrame)
+  }, [locateToday])
 
   const formatRange = (start: string, end: string) => {
     const startDate = parseTaskFlowDate(start)
@@ -301,7 +311,7 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
 
           <button
             type="button"
-            onClick={locateToday}
+            onClick={() => locateToday('smooth')}
             disabled={todayIndex === undefined}
             className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             title={
