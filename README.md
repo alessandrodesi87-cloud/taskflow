@@ -154,3 +154,11 @@ Per domande/problemi, controlla:
 - Supabase docs: https://supabase.com/docs
 - Next.js docs: https://nextjs.org/docs
 - Telegram Bot API: https://core.telegram.org/bots/api
+
+## Riferimenti open source
+
+La progettazione evolutiva del Gantt prende spunto anche da
+[Jordium Gantt Vue3](https://github.com/nelson820125/jordium-gantt-vue3),
+distribuito con licenza MIT. TaskFlow non incorpora la libreria Vue e non ne
+dipende: il componente viene implementato autonomamente in React, mantenendo
+Jordium come riferimento dichiarato per interazioni e visualizzazione.
