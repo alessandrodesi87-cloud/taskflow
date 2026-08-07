@@ -21,6 +21,38 @@ interface SyncResult {
   failures: Array<{ email: string; message: string }>
 }
 
+interface NotificationPreferencesView {
+  defaults: {
+    email_enabled: boolean
+    email_time: string
+    timezone: string
+    include_overdue: boolean
+  }
+  overrides: {
+    email_enabled: boolean | null
+    email_time: string | null
+    include_overdue: boolean | null
+  }
+  effective: {
+    email_enabled: boolean
+    email_time: string
+    timezone: string
+    include_overdue: boolean
+  }
+  using_defaults: boolean
+  replies_enabled: boolean
+  deliveries: Array<{
+    id: string
+    notification_kind: 'daily_digest' | 'test'
+    delivery_date: string
+    scheduled_for: string | null
+    sent_at: string | null
+    status: string
+    task_count: number
+    created_at: string
+  }>
+}
+
 async function authenticatedFetch(path: string, init?: RequestInit) {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) throw new Error('Sessione scaduta. Accedi di nuovo.')
@@ -41,6 +73,7 @@ async function authenticatedFetch(path: string, init?: RequestInit) {
 export default function SettingsPage() {
   const [accounts, setAccounts] = useState<GoogleAccountView[]>([])
   const [projects, setProjects] = useState<Project[]>([])
+  const [notifications, setNotifications] = useState<NotificationPreferencesView | null>(null)
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
@@ -53,17 +86,19 @@ export default function SettingsPage() {
       return
     }
 
-    const [projectsResult, accountsResult] = await Promise.all([
+    const [projectsResult, accountsResult, notificationsResult] = await Promise.all([
       supabase
         .from('projects')
         .select('id, name, description, owner_id, start_date, end_date, color, created_at')
         .order('start_date', { ascending: true }),
       authenticatedFetch('/api/google/accounts'),
+      authenticatedFetch('/api/notifications/preferences'),
     ])
 
     if (projectsResult.error) throw new Error('Impossibile leggere i progetti')
     setProjects((projectsResult.data || []) as Project[])
     setAccounts(accountsResult as GoogleAccountView[])
+    setNotifications(notificationsResult as NotificationPreferencesView)
   }, [router])
 
   useEffect(() => {
@@ -164,6 +199,51 @@ export default function SettingsPage() {
     }
   }
 
+  const saveNotifications = async () => {
+    if (!notifications) return
+
+    setWorking('notifications-save')
+    setMessage(null)
+    try {
+      await authenticatedFetch('/api/notifications/preferences', {
+        method: 'PATCH',
+        body: JSON.stringify(notifications.using_defaults ? {
+          use_defaults: true,
+        } : {
+          use_defaults: false,
+          email_enabled: notifications.effective.email_enabled,
+          email_time: notifications.effective.email_time,
+          include_overdue: notifications.effective.include_overdue,
+        }),
+      })
+      const refreshed = await authenticatedFetch('/api/notifications/preferences') as NotificationPreferencesView
+      setNotifications(refreshed)
+      setMessage({ type: 'success', text: 'Preferenze email salvate.' })
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Salvataggio non riuscito' })
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  const sendTestEmail = async () => {
+    setWorking('notifications-test')
+    setMessage(null)
+    try {
+      const result = await authenticatedFetch('/api/notifications/test', { method: 'POST' }) as { task_count: number }
+      setMessage({
+        type: 'success',
+        text: `Email di prova inviata. Contiene ${result.task_count} task da controllare.`,
+      })
+      const refreshed = await authenticatedFetch('/api/notifications/preferences') as NotificationPreferencesView
+      setNotifications(refreshed)
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Invio di prova non riuscito' })
+    } finally {
+      setWorking(null)
+    }
+  }
+
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center">Caricamento...</div>
   }
@@ -198,6 +278,135 @@ export default function SettingsPage() {
           }`}>
             {message.text}
           </div>
+        )}
+
+        {notifications && (
+          <section className="mb-8 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
+            <div className="border-b border-blue-100 bg-blue-50 p-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">La tua giornata</p>
+                  <h2 className="mt-1 text-xl font-semibold text-gray-900">Promemoria email</h2>
+                  <p className="mt-2 max-w-2xl text-sm text-gray-600">
+                    Ricevi al mattino i task in scadenza e, se vuoi, anche quelli arretrati.
+                  </p>
+                </div>
+                <span className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${
+                  notifications.effective.email_enabled
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-gray-200 text-gray-600'
+                }`}>
+                  {notifications.effective.email_enabled
+                    ? `Attivo alle ${notifications.effective.email_time}`
+                    : 'Disattivato'}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-5 p-6">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 p-4">
+                <input
+                  type="checkbox"
+                  checked={notifications.using_defaults}
+                  onChange={(event) => setNotifications((current) => current ? ({
+                    ...current,
+                    using_defaults: event.target.checked,
+                    effective: event.target.checked ? { ...current.defaults } : current.effective,
+                  }) : current)}
+                  className="mt-0.5 h-5 w-5 rounded border-gray-300 text-blue-600"
+                />
+                <span>
+                  <span className="block font-semibold text-gray-900">Usa le impostazioni consigliate dall’admin</span>
+                  <span className="mt-1 block text-sm text-gray-500">
+                    Attualmente: {notifications.defaults.email_enabled ? 'attivo' : 'disattivato'} alle {notifications.defaults.email_time}
+                    {notifications.defaults.include_overdue ? ', arretrati inclusi' : ', solo scadenze di oggi'}.
+                  </span>
+                </span>
+              </label>
+
+              {!notifications.using_defaults && (
+                <div className="grid gap-4 md:grid-cols-3">
+                  <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-4">
+                    <input
+                      type="checkbox"
+                      checked={notifications.effective.email_enabled}
+                      onChange={(event) => setNotifications((current) => current ? ({
+                        ...current,
+                        effective: { ...current.effective, email_enabled: event.target.checked },
+                      }) : current)}
+                      className="h-5 w-5 rounded border-gray-300 text-blue-600"
+                    />
+                    <span className="font-semibold text-gray-900">Ricevi email</span>
+                  </label>
+
+                  <label className="block rounded-lg border border-gray-200 p-4">
+                    <span className="block text-sm font-semibold text-gray-900">Il tuo orario</span>
+                    <input
+                      type="time"
+                      min="07:00"
+                      max="22:00"
+                      value={notifications.effective.email_time}
+                      onChange={(event) => setNotifications((current) => current ? ({
+                        ...current,
+                        effective: { ...current.effective, email_time: event.target.value },
+                      }) : current)}
+                      disabled={!notifications.effective.email_enabled}
+                      className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 disabled:bg-gray-100"
+                    />
+                    <span className="mt-1 block text-xs text-gray-500">Ora italiana · 07:00–22:00</span>
+                  </label>
+
+                  <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-4">
+                    <input
+                      type="checkbox"
+                      checked={notifications.effective.include_overdue}
+                      onChange={(event) => setNotifications((current) => current ? ({
+                        ...current,
+                        effective: { ...current.effective, include_overdue: event.target.checked },
+                      }) : current)}
+                      disabled={!notifications.effective.email_enabled}
+                      className="h-5 w-5 rounded border-gray-300 text-blue-600 disabled:opacity-50"
+                    />
+                    <span>
+                      <span className="block font-semibold text-gray-900">Includi arretrati</span>
+                      <span className="block text-xs text-gray-500">Anche task già scaduti</span>
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">
+                Le email riguardano i task assegnati a te; se un task non ha assegnatario, viene incluso quando ne sei il proprietario.
+                {notifications.replies_enabled
+                  ? ' Puoi anche rispondere all’email per completare o riprogrammare un task.'
+                  : ''}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-gray-500">
+                Le modifiche valgono dal prossimo promemoria. Il test viene inviato subito.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={sendTestEmail}
+                  disabled={working !== null}
+                  className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                >
+                  {working === 'notifications-test' ? 'Invio...' : 'Invia email di prova'}
+                </button>
+                <button
+                  type="button"
+                  onClick={saveNotifications}
+                  disabled={working !== null}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {working === 'notifications-save' ? 'Salvataggio...' : 'Salva preferenze'}
+                </button>
+              </div>
+            </div>
+          </section>
         )}
 
         <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">

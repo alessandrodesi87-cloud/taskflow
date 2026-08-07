@@ -13,6 +13,18 @@ interface UserInfo {
   telegram_chat_id?: string
 }
 
+interface NotificationAdminSettings {
+  defaults: {
+    email_enabled: boolean
+    email_time: string
+    timezone: string
+    include_overdue: boolean
+  }
+  personalized_users: number
+  email_configured: boolean
+  replies_configured: boolean
+}
+
 export default function AdminPage() {
   const [users, setUsers] = useState<UserInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -21,6 +33,9 @@ export default function AdminPage() {
   const [newUserPassword, setNewUserPassword] = useState('')
   const [accessToken, setAccessToken] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [notificationSettings, setNotificationSettings] = useState<NotificationAdminSettings | null>(null)
+  const [savingNotifications, setSavingNotifications] = useState(false)
+  const [notificationMessage, setNotificationMessage] = useState('')
   const router = useRouter()
 
   useEffect(() => {
@@ -32,11 +47,11 @@ export default function AdminPage() {
           return
         }
 
-        const response = await fetch('/api/admin/users', {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        })
+        const headers = { Authorization: `Bearer ${session.access_token}` }
+        const [response, notificationsResponse] = await Promise.all([
+          fetch('/api/admin/users', { headers }),
+          fetch('/api/admin/notifications', { headers }),
+        ])
 
         if (response.status === 401) {
           router.push('/dashboard')
@@ -47,9 +62,15 @@ export default function AdminPage() {
           throw new Error('Impossibile caricare gli utenti')
         }
 
+        if (!notificationsResponse.ok) {
+          throw new Error('Impossibile caricare le impostazioni email')
+        }
+
         const payload = await response.json()
+        const notificationsPayload = await notificationsResponse.json()
         setAccessToken(session.access_token)
         setUsers(payload.users || [])
+        setNotificationSettings(notificationsPayload)
         setIsAdmin(true)
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : 'Errore inatteso')
@@ -98,6 +119,31 @@ export default function AdminPage() {
     }
   }
 
+  const saveNotificationDefaults = async () => {
+    if (!notificationSettings) return
+
+    setSavingNotifications(true)
+    setErrorMessage('')
+    setNotificationMessage('')
+    try {
+      const response = await fetch('/api/admin/notifications', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(notificationSettings.defaults),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || 'Salvataggio non riuscito')
+      setNotificationMessage('Impostazioni predefinite salvate.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Errore inatteso')
+    } finally {
+      setSavingNotifications(false)
+    }
+  }
+
   if (loading) return <div className="p-8">Caricamento...</div>
   if (!isAdmin) return <div className="p-8">Non autorizzato</div>
 
@@ -114,6 +160,99 @@ export default function AdminPage() {
           <div className="mb-6 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {errorMessage}
           </div>
+        )}
+
+        {notificationSettings && (
+          <section className="mb-8 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
+            <div className="border-b border-blue-100 bg-blue-50 p-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Notifiche di squadra</p>
+                  <h2 className="mt-1 text-xl font-bold text-gray-900">Promemoria email predefiniti</h2>
+                  <p className="mt-2 max-w-2xl text-sm text-gray-600">
+                    Questi valori si applicano a tutti. Ogni utente può mantenerli oppure personalizzarli dalle proprie impostazioni.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                  <span className={`rounded-full px-3 py-1 ${notificationSettings.email_configured ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>
+                    {notificationSettings.email_configured ? 'Invio configurato' : 'Invio da configurare'}
+                  </span>
+                  <span className={`rounded-full px-3 py-1 ${notificationSettings.replies_configured ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                    {notificationSettings.replies_configured ? 'Risposte attive' : 'Risposte non attive'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 p-6 md:grid-cols-3">
+              <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-4">
+                <input
+                  type="checkbox"
+                  checked={notificationSettings.defaults.email_enabled}
+                  onChange={(event) => setNotificationSettings((current) => current ? ({
+                    ...current,
+                    defaults: { ...current.defaults, email_enabled: event.target.checked },
+                  }) : current)}
+                  className="h-5 w-5 rounded border-gray-300 text-blue-600"
+                />
+                <span>
+                  <span className="block font-semibold text-gray-900">Email giornaliera</span>
+                  <span className="block text-xs text-gray-500">Attiva per impostazione predefinita</span>
+                </span>
+              </label>
+
+              <label className="block rounded-lg border border-gray-200 p-4">
+                <span className="block text-sm font-semibold text-gray-900">Orario predefinito</span>
+                <input
+                  type="time"
+                  min="07:00"
+                  max="22:00"
+                  value={notificationSettings.defaults.email_time}
+                  onChange={(event) => setNotificationSettings((current) => current ? ({
+                    ...current,
+                    defaults: { ...current.defaults, email_time: event.target.value },
+                  }) : current)}
+                  className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2"
+                />
+                <span className="mt-1 block text-xs text-gray-500">Fuso orario Italia · dalle 07:00 alle 22:00</span>
+              </label>
+
+              <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-4">
+                <input
+                  type="checkbox"
+                  checked={notificationSettings.defaults.include_overdue}
+                  onChange={(event) => setNotificationSettings((current) => current ? ({
+                    ...current,
+                    defaults: { ...current.defaults, include_overdue: event.target.checked },
+                  }) : current)}
+                  className="h-5 w-5 rounded border-gray-300 text-blue-600"
+                />
+                <span>
+                  <span className="block font-semibold text-gray-900">Includi arretrati</span>
+                  <span className="block text-xs text-gray-500">Mostra anche i task già scaduti</span>
+                </span>
+              </label>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-gray-600">
+                {notificationSettings.personalized_users === 0
+                  ? 'Tutti gli utenti stanno usando i valori predefiniti.'
+                  : `${notificationSettings.personalized_users} utenti hanno scelto impostazioni personali.`}
+              </p>
+              <div className="flex items-center gap-3">
+                {notificationMessage && <span className="text-sm font-medium text-green-700">{notificationMessage}</span>}
+                <button
+                  type="button"
+                  onClick={saveNotificationDefaults}
+                  disabled={savingNotifications}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {savingNotifications ? 'Salvataggio...' : 'Salva impostazioni email'}
+                </button>
+              </div>
+            </div>
+          </section>
         )}
 
         {/* Add new user */}
