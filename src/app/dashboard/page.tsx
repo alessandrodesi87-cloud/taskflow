@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Project, Task } from '@/types'
 import GanttChart from '@/components/gantt/GanttChart'
 import type { User as AuthUser } from '@supabase/supabase-js'
@@ -191,6 +192,7 @@ export default function DashboardPage() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-blue-600">TaskFlow</h1>
           <div className="flex items-center gap-4">
+            <Link href="/settings" className="text-sm font-medium text-gray-600 hover:text-blue-600">Integrazioni</Link>
             <span className="text-gray-600 text-sm">{user?.email}</span>
             <button onClick={handleLogout} className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300">Logout</button>
           </div>

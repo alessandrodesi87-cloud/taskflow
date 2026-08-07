@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 
-export async function requireAdmin(request: NextRequest) {
+export async function requireUser(request: NextRequest) {
   const authorization = request.headers.get('authorization')
   const token = authorization?.startsWith('Bearer ')
     ? authorization.slice('Bearer '.length)
@@ -28,15 +28,27 @@ export async function requireAdmin(request: NextRequest) {
   }
 
   const admin = getSupabaseAdmin()
+
+  return { user: data.user, admin }
+}
+
+export async function requireAdmin(request: NextRequest) {
+  const authenticated = await requireUser(request)
+
+  if (!authenticated) {
+    return null
+  }
+
+  const { user, admin } = authenticated
   const { data: profile, error: profileError } = await admin
     .from('users')
     .select('role')
-    .eq('id', data.user.id)
+    .eq('id', user.id)
     .single()
 
   if (profileError || profile?.role !== 'admin') {
     return null
   }
 
-  return { user: data.user, admin }
+  return { user, admin }
 }
