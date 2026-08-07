@@ -7,6 +7,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
 import {
@@ -31,6 +33,8 @@ interface GanttChartProps {
   projects: Project[]
   tasks: Task[]
   onTaskClick?: (task: Task) => void
+  onTaskDateChange?: (task: Task, startDate: string, dueDate: string) => void | Promise<void>
+  savingTaskId?: string | null
 }
 
 interface HeaderSegment {
@@ -40,6 +44,16 @@ interface HeaderSegment {
   secondaryLabel?: string
   isToday: boolean
   isWeekend: boolean
+}
+
+type TaskInteractionMode = 'move' | 'resize-start' | 'resize-end'
+
+interface TaskDragState {
+  taskId: string
+  pointerId: number
+  originX: number
+  deltaDays: number
+  mode: TaskInteractionMode
 }
 
 interface TimelineLaneProps {
@@ -53,6 +67,11 @@ interface TimelineLaneProps {
 
 const LEFT_COLUMN_WIDTH = 256
 const MIN_TIMELINE_WIDTH = 720
+const futureDaysByZoom: Record<ZoomMode, number> = {
+  day: 30,
+  week: 90,
+  month: 180,
+}
 
 const zoomOptions: Array<{
   value: ZoomMode
@@ -125,9 +144,18 @@ function TimelineLane({
   )
 }
 
-export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartProps) {
+export default function GanttChart({
+  projects,
+  tasks,
+  onTaskClick,
+  onTaskDateChange,
+  savingTaskId,
+}: GanttChartProps) {
   const [zoom, setZoom] = useState<ZoomMode>('week')
+  const [dragState, setDragState] = useState<TaskDragState | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<TaskDragState | null>(null)
+  const suppressTaskClickRef = useRef<string | null>(null)
   const today = useMemo(() => startOfDay(new Date()), [])
 
   const dateRange = useMemo(() => {
@@ -139,18 +167,23 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
       .filter((date): date is Date => date !== null)
 
     if (dates.length === 0) {
-      return { minDate: today, maxDate: today, days: 1 }
+      const maxDate = addDays(today, futureDaysByZoom[zoom])
+      return {
+        minDate: today,
+        maxDate,
+        days: differenceInCalendarDays(maxDate, today) + 1,
+      }
     }
 
     const minDate = min([...dates, today])
-    const maxDate = max([...dates, today])
+    const maxDate = max([...dates, addDays(today, futureDaysByZoom[zoom])])
 
     return {
       minDate,
       maxDate,
       days: Math.max(differenceInCalendarDays(maxDate, minDate) + 1, 1),
     }
-  }, [projects, tasks, today])
+  }, [projects, tasks, today, zoom])
 
   const selectedZoom = zoomOptions.find((option) => option.value === zoom) ?? zoomOptions[1]
   const timelineWidth = Math.max(
@@ -244,8 +277,7 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
       scrollContainerRef.current.clientWidth - LEFT_COLUMN_WIDTH,
       1
     )
-    const target =
-      LEFT_COLUMN_WIDTH + todayIndex * dayWidth - visibleTimelineWidth / 2
+    const target = todayIndex * dayWidth + dayWidth / 2 - visibleTimelineWidth / 2
 
     scrollContainerRef.current.scrollTo({
       left: Math.max(target, 0),
@@ -260,6 +292,189 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
 
     return () => window.cancelAnimationFrame(animationFrame)
   }, [locateToday])
+
+  const clampTaskDelta = (
+    task: Task,
+    requestedDelta: number,
+    mode: TaskInteractionMode
+  ) => {
+    const startDate = parseTaskFlowDate(task.start_date)
+    const dueDate = parseTaskFlowDate(task.due_date)
+    if (!startDate || !dueDate) return 0
+
+    const startIndex = differenceInCalendarDays(startDate, dateRange.minDate)
+    const duration = Math.max(differenceInCalendarDays(dueDate, startDate) + 1, 1)
+
+    if (mode === 'resize-start') {
+      return Math.min(Math.max(requestedDelta, -startIndex), duration - 1)
+    }
+
+    if (mode === 'resize-end') {
+      return Math.min(
+        Math.max(requestedDelta, -(duration - 1)),
+        dateRange.days - startIndex - duration
+      )
+    }
+
+    return Math.min(
+      Math.max(requestedDelta, -startIndex),
+      dateRange.days - startIndex - duration
+    )
+  }
+
+  const beginTaskDrag = (
+    event: ReactPointerEvent<HTMLElement>,
+    task: Task,
+    mode: TaskInteractionMode
+  ) => {
+    if (!onTaskDateChange || savingTaskId === task.id || event.button !== 0) return
+
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const nextDragState: TaskDragState = {
+      taskId: task.id,
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      deltaDays: 0,
+      mode,
+    }
+    dragStateRef.current = nextDragState
+    setDragState(nextDragState)
+  }
+
+  const moveTaskDrag = (event: ReactPointerEvent<HTMLElement>, task: Task) => {
+    const activeDrag = dragStateRef.current
+    if (!activeDrag || activeDrag.taskId !== task.id || activeDrag.pointerId !== event.pointerId) {
+      return
+    }
+
+    const requestedDelta = Math.round((event.clientX - activeDrag.originX) / dayWidth)
+    const deltaDays = clampTaskDelta(task, requestedDelta, activeDrag.mode)
+
+    if (deltaDays === activeDrag.deltaDays) return
+
+    const nextDragState = { ...activeDrag, deltaDays }
+    dragStateRef.current = nextDragState
+    setDragState(nextDragState)
+  }
+
+  const cancelTaskDrag = (event: ReactPointerEvent<HTMLElement>, task: Task) => {
+    const activeDrag = dragStateRef.current
+    if (!activeDrag || activeDrag.taskId !== task.id || activeDrag.pointerId !== event.pointerId) {
+      return
+    }
+
+    dragStateRef.current = null
+    setDragState(null)
+  }
+
+  const finishTaskDrag = (event: ReactPointerEvent<HTMLElement>, task: Task) => {
+    const activeDrag = dragStateRef.current
+    if (!activeDrag || activeDrag.taskId !== task.id || activeDrag.pointerId !== event.pointerId) {
+      return
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    dragStateRef.current = null
+    setDragState(null)
+
+    if (activeDrag.deltaDays === 0) return
+
+    const startDate = parseTaskFlowDate(task.start_date)
+    const dueDate = parseTaskFlowDate(task.due_date)
+    if (!startDate || !dueDate) return
+
+    suppressTaskClickRef.current = task.id
+    window.setTimeout(() => {
+      if (suppressTaskClickRef.current === task.id) {
+        suppressTaskClickRef.current = null
+      }
+    }, 0)
+    const nextStartDate = format(
+      activeDrag.mode === 'resize-end'
+        ? startDate
+        : addDays(startDate, activeDrag.deltaDays),
+      'yyyy-MM-dd'
+    )
+    const nextDueDate = format(
+      activeDrag.mode === 'resize-start'
+        ? dueDate
+        : addDays(dueDate, activeDrag.deltaDays),
+      'yyyy-MM-dd'
+    )
+    void onTaskDateChange?.(task, nextStartDate, nextDueDate)
+  }
+
+  const openTask = (task: Task) => {
+    if (suppressTaskClickRef.current === task.id) {
+      suppressTaskClickRef.current = null
+      return
+    }
+
+    onTaskClick?.(task)
+  }
+
+  const moveTaskWithKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>, task: Task) => {
+    if (
+      !onTaskDateChange ||
+      savingTaskId === task.id ||
+      !event.altKey ||
+      (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')
+    ) {
+      return
+    }
+
+    const startDate = parseTaskFlowDate(task.start_date)
+    const dueDate = parseTaskFlowDate(task.due_date)
+    if (!startDate || !dueDate) return
+
+    const direction = event.key === 'ArrowRight' ? 1 : -1
+    const requestedDelta = direction * (event.shiftKey ? 7 : 1)
+    const deltaDays = clampTaskDelta(task, requestedDelta, 'move')
+    if (deltaDays === 0) return
+
+    event.preventDefault()
+    const nextStartDate = format(addDays(startDate, deltaDays), 'yyyy-MM-dd')
+    const nextDueDate = format(addDays(dueDate, deltaDays), 'yyyy-MM-dd')
+    void onTaskDateChange(task, nextStartDate, nextDueDate)
+  }
+
+  const resizeTaskWithKeyboard = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    task: Task,
+    mode: Extract<TaskInteractionMode, 'resize-start' | 'resize-end'>
+  ) => {
+    if (
+      !onTaskDateChange ||
+      savingTaskId === task.id ||
+      (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')
+    ) {
+      return
+    }
+
+    const startDate = parseTaskFlowDate(task.start_date)
+    const dueDate = parseTaskFlowDate(task.due_date)
+    if (!startDate || !dueDate) return
+
+    const direction = event.key === 'ArrowRight' ? 1 : -1
+    const requestedDelta = direction * (event.shiftKey ? 7 : 1)
+    const deltaDays = clampTaskDelta(task, requestedDelta, mode)
+    if (deltaDays === 0) return
+
+    event.preventDefault()
+    const nextStartDate = format(
+      mode === 'resize-start' ? addDays(startDate, deltaDays) : startDate,
+      'yyyy-MM-dd'
+    )
+    const nextDueDate = format(
+      mode === 'resize-end' ? addDays(dueDate, deltaDays) : dueDate,
+      'yyyy-MM-dd'
+    )
+    void onTaskDateChange(task, nextStartDate, nextDueDate)
+  }
 
   const formatRange = (start: string, end: string) => {
     const startDate = parseTaskFlowDate(start)
@@ -332,7 +547,9 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
             </span>
           ))}
           <span className="ml-auto hidden text-slate-400 sm:inline">
-            Scorri orizzontalmente per esplorare il periodo
+            {onTaskDateChange
+              ? 'Trascina il centro per spostare, i bordi per modificare le date'
+              : 'Scorri orizzontalmente per esplorare il periodo'}
           </span>
         </div>
       </div>
@@ -429,7 +646,31 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
                 </div>
 
                 {projectTasks.map((task) => {
-                  const taskBar = getBarPosition(task.start_date, task.due_date)
+                  const activeDrag = dragState?.taskId === task.id ? dragState : null
+                  const displayedStartDate =
+                    activeDrag && activeDrag.mode !== 'resize-end'
+                    ? format(
+                        addDays(
+                          parseTaskFlowDate(task.start_date) ?? dateRange.minDate,
+                          activeDrag.deltaDays
+                        ),
+                        'yyyy-MM-dd'
+                      )
+                    : task.start_date
+                  const displayedDueDate =
+                    activeDrag && activeDrag.mode !== 'resize-start'
+                    ? format(
+                        addDays(
+                          parseTaskFlowDate(task.due_date) ?? dateRange.minDate,
+                          activeDrag.deltaDays
+                        ),
+                        'yyyy-MM-dd'
+                      )
+                    : task.due_date
+                  const displayedTaskBar = getBarPosition(
+                    displayedStartDate,
+                    displayedDueDate
+                  )
 
                   return (
                     <div
@@ -445,7 +686,7 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
                           {task.title}
                         </p>
                         <p className="mt-0.5 text-xs text-slate-500">
-                          {formatRange(task.start_date, task.due_date)}
+                          {formatRange(displayedStartDate, displayedDueDate)}
                         </p>
                       </div>
 
@@ -456,18 +697,80 @@ export default function GanttChart({ projects, tasks, onTaskClick }: GanttChartP
                         weekendIndexes={weekendDayIndexes}
                         todayIndex={todayIndex}
                       >
-                        <button
-                          type="button"
-                          onClick={() => onTaskClick?.(task)}
-                          className={`absolute top-1/2 z-[2] flex h-7 -translate-y-1/2 items-center overflow-hidden rounded-md px-2 text-left text-xs font-semibold text-white shadow-sm transition hover:-translate-y-[55%] hover:shadow-md ${statusColors[task.status]}`}
-                          style={{ left: taskBar.left, width: taskBar.width }}
-                          title={`${task.title} · ${statusLabels[task.status]} · ${formatRange(
-                            task.start_date,
-                            task.due_date
-                          )}`}
+                        <div
+                          className={`absolute top-1/2 z-[2] h-7 -translate-y-1/2 touch-none rounded-md text-white shadow-sm transition hover:-translate-y-[55%] hover:shadow-md ${
+                            activeDrag ? 'ring-2 ring-blue-200 ring-offset-2' : ''
+                          } ${savingTaskId === task.id ? 'opacity-60' : ''} ${
+                            statusColors[task.status]
+                          }`}
+                          style={{
+                            left: displayedTaskBar.left,
+                            width: Math.max(displayedTaskBar.width, onTaskDateChange ? 32 : 8),
+                          }}
                         >
-                          <span className="truncate">{task.title}</span>
-                        </button>
+                          {onTaskDateChange ? (
+                            <button
+                              type="button"
+                              onPointerDown={(event) =>
+                                beginTaskDrag(event, task, 'resize-start')
+                              }
+                              onPointerMove={(event) => moveTaskDrag(event, task)}
+                              onPointerUp={(event) => finishTaskDrag(event, task)}
+                              onPointerCancel={(event) => cancelTaskDrag(event, task)}
+                              onKeyDown={(event) =>
+                                resizeTaskWithKeyboard(event, task, 'resize-start')
+                              }
+                              disabled={savingTaskId === task.id}
+                              aria-label={`Modifica la data iniziale di ${task.title}`}
+                              title="Trascina per cambiare la data iniziale"
+                              className="absolute inset-y-0 left-0 z-10 flex w-2.5 cursor-ew-resize items-center justify-center rounded-l-md hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
+                            >
+                              <span className="h-3.5 w-0.5 rounded-full bg-white/70" />
+                            </button>
+                          ) : null}
+
+                          <button
+                            type="button"
+                            onClick={() => openTask(task)}
+                            onPointerDown={(event) => beginTaskDrag(event, task, 'move')}
+                            onPointerMove={(event) => moveTaskDrag(event, task)}
+                            onPointerUp={(event) => finishTaskDrag(event, task)}
+                            onPointerCancel={(event) => cancelTaskDrag(event, task)}
+                            onKeyDown={(event) => moveTaskWithKeyboard(event, task)}
+                            disabled={savingTaskId === task.id}
+                            aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+                            className={`absolute inset-y-0 overflow-hidden px-2 text-left text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white ${
+                              onTaskDateChange
+                                ? 'left-2.5 right-2.5 cursor-grab active:cursor-grabbing'
+                                : 'inset-x-0'
+                            }`}
+                            title={`${task.title} · ${statusLabels[task.status]} · ${formatRange(
+                              displayedStartDate,
+                              displayedDueDate
+                            )}${onTaskDateChange ? ' · Trascina il centro per spostare' : ''}`}
+                          >
+                            <span className="block truncate">{task.title}</span>
+                          </button>
+
+                          {onTaskDateChange ? (
+                            <button
+                              type="button"
+                              onPointerDown={(event) => beginTaskDrag(event, task, 'resize-end')}
+                              onPointerMove={(event) => moveTaskDrag(event, task)}
+                              onPointerUp={(event) => finishTaskDrag(event, task)}
+                              onPointerCancel={(event) => cancelTaskDrag(event, task)}
+                              onKeyDown={(event) =>
+                                resizeTaskWithKeyboard(event, task, 'resize-end')
+                              }
+                              disabled={savingTaskId === task.id}
+                              aria-label={`Modifica la scadenza di ${task.title}`}
+                              title="Trascina per cambiare la scadenza"
+                              className="absolute inset-y-0 right-0 z-10 flex w-2.5 cursor-ew-resize items-center justify-center rounded-r-md hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
+                            >
+                              <span className="h-3.5 w-0.5 rounded-full bg-white/70" />
+                            </button>
+                          ) : null}
+                        </div>
                       </TimelineLane>
                     </div>
                   )
