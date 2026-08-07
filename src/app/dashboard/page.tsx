@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [showProjectModal, setShowProjectModal] = useState(false)
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [savingTaskId, setSavingTaskId] = useState<string | null>(null)
   const [shareProject, setShareProject] = useState<Project | null>(null)
   const [shareEmail, setShareEmail] = useState('')
   const [shareRole, setShareRole] = useState<'member' | 'co-owner'>('member')
@@ -182,6 +183,45 @@ export default function DashboardPage() {
     await loadData()
   }
 
+  const handleTaskDateChange = async (task: Task, startDate: string, dueDate: string) => {
+    setErrorMsg('')
+    setSavingTaskId(task.id)
+    setTasks(currentTasks =>
+      currentTasks.map(currentTask =>
+        currentTask.id === task.id
+          ? { ...currentTask, start_date: startDate, due_date: dueDate }
+          : currentTask
+      )
+    )
+
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .update({
+          start_date: startDate,
+          due_date: dueDate,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', task.id)
+        .select('id')
+        .single()
+
+      if (error || !data) {
+        setErrorMsg(
+          `Non sono riuscito a salvare le nuove date: ${
+            error?.message || 'attivita non trovata'
+          }`
+        )
+        await loadData()
+      }
+    } catch {
+      setErrorMsg('Non sono riuscito a salvare le nuove date. Riprova tra poco.')
+      await loadData()
+    } finally {
+      setSavingTaskId(null)
+    }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen"><p>Caricamento...</p></div>
   }
@@ -228,7 +268,13 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <GanttChart projects={projects} tasks={tasks} onTaskClick={setSelectedTask} />
+            <GanttChart
+              projects={projects}
+              tasks={tasks}
+              onTaskClick={setSelectedTask}
+              onTaskDateChange={handleTaskDateChange}
+              savingTaskId={savingTaskId}
+            />
           </>
         )}
       </main>
