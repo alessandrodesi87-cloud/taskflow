@@ -40,6 +40,7 @@ interface PreferenceRow {
   email_enabled_override: boolean | null
   email_time_override: string | null
   include_overdue_override: boolean | null
+  notification_project_ids: string[]
 }
 
 function getResend() {
@@ -168,7 +169,8 @@ async function loadReminderTasks(
   admin: SupabaseClient,
   userId: string,
   deliveryDate: string,
-  includeOverdue: boolean
+  includeOverdue: boolean,
+  projectIds: string[] = []
 ) {
   let query = admin
     .from('tasks')
@@ -176,6 +178,8 @@ async function loadReminderTasks(
     .neq('status', 'done')
     .or(`assignee_id.eq.${userId},and(assignee_id.is.null,owner_id.eq.${userId})`)
     .order('due_date', { ascending: true })
+
+  if (projectIds.length > 0) query = query.in('project_id', projectIds)
 
   query = includeOverdue
     ? query.lte('due_date', deliveryDate)
@@ -312,7 +316,7 @@ export async function scheduleDailyReminders(admin: SupabaseClient, now = new Da
   const [{ data: users, error: usersError }, { data: preferences, error: preferencesError }] = await Promise.all([
     admin.from('users').select('id, email, full_name').not('email', 'is', null),
     admin.from('user_notification_preferences').select(
-      'user_id, email_enabled_override, email_time_override, include_overdue_override'
+      'user_id, email_enabled_override, email_time_override, include_overdue_override, notification_project_ids'
     ),
   ])
 
@@ -325,7 +329,8 @@ export async function scheduleDailyReminders(admin: SupabaseClient, now = new Da
   const result = { scheduled: 0, skipped: 0, disabled: 0, failures: [] as Array<{ userId: string; message: string }> }
 
   for (const user of (users || []) as UserRow[]) {
-    const effective = mergeNotificationPreferences(defaults, preferenceMap.get(user.id))
+    const preference = preferenceMap.get(user.id)
+    const effective = mergeNotificationPreferences(defaults, preference)
     if (!effective.email_enabled) {
       result.disabled += 1
       continue
@@ -398,7 +403,8 @@ export async function scheduleDailyReminders(admin: SupabaseClient, now = new Da
         admin,
         user.id,
         deliveryDate,
-        effective.include_overdue
+        effective.include_overdue,
+        preference?.notification_project_ids || []
       )
 
       if (tasks.length === 0) {
@@ -443,7 +449,7 @@ export async function sendTestReminder(admin: SupabaseClient, userId: string) {
   const [{ data: user, error: userError }, { data: preference, error: preferenceError }] = await Promise.all([
     admin.from('users').select('id, email, full_name').eq('id', userId).single(),
     admin.from('user_notification_preferences')
-      .select('user_id, email_enabled_override, email_time_override, include_overdue_override')
+      .select('user_id, email_enabled_override, email_time_override, include_overdue_override, notification_project_ids')
       .eq('user_id', userId)
       .maybeSingle(),
   ])
@@ -453,7 +459,13 @@ export async function sendTestReminder(admin: SupabaseClient, userId: string) {
 
   const effective = mergeNotificationPreferences(defaults, preference as PreferenceRow | null)
   const deliveryDate = localDateString(new Date(), effective.timezone)
-  const tasks = await loadReminderTasks(admin, userId, deliveryDate, effective.include_overdue)
+  const tasks = await loadReminderTasks(
+    admin,
+    userId,
+    deliveryDate,
+    effective.include_overdue,
+    (preference as PreferenceRow | null)?.notification_project_ids || []
+  )
   const providerMessageId = await deliverReminder(user as UserRow, tasks, deliveryDate, {
     idempotencyKey: `test-${userId}-${crypto.randomUUID()}`,
     isTest: true,
