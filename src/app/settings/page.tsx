@@ -21,6 +21,15 @@ interface SyncResult {
   failures: Array<{ email: string; message: string }>
 }
 
+interface TelegramConnectView {
+  url: string
+  app_url: string
+  web_url: string
+  bot_username: string
+  start_command: string
+  expires_at: string
+}
+
 interface NotificationPreferencesView {
   defaults: {
     email_enabled: boolean
@@ -86,6 +95,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [telegramLink, setTelegramLink] = useState<TelegramConnectView | null>(null)
   const router = useRouter()
 
   const loadData = useCallback(async () => {
@@ -261,10 +271,44 @@ export default function SettingsPage() {
     setWorking('telegram-connect')
     setMessage(null)
     try {
-      const result = await authenticatedFetch('/api/telegram/connect', { method: 'POST' }) as { url: string }
-      window.location.assign(result.url)
+      const result = await authenticatedFetch('/api/telegram/connect', { method: 'POST' }) as TelegramConnectView
+      setTelegramLink(result)
+      setMessage({
+        type: 'success',
+        text: 'Collegamento pronto. Scegli se aprire l\u2019app Telegram oppure Telegram Web.',
+      })
     } catch (error) {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Collegamento Telegram non riuscito' })
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  const copyTelegramCommand = async () => {
+    if (!telegramLink) return
+    try {
+      await navigator.clipboard.writeText(telegramLink.start_command)
+      setMessage({ type: 'success', text: 'Comando copiato. Incollalo nella chat con il bot su Telegram Web.' })
+    } catch {
+      setMessage({ type: 'error', text: 'Copia manualmente il comando mostrato sotto.' })
+    }
+  }
+
+  const checkTelegramConnection = async () => {
+    setWorking('telegram-check')
+    setMessage(null)
+    try {
+      const refreshed = await authenticatedFetch('/api/notifications/preferences') as NotificationPreferencesView
+      setNotifications(refreshed)
+      if (refreshed.telegram_connected) {
+        setTelegramLink(null)
+        setMessage({ type: 'success', text: 'Telegram collegato correttamente.' })
+      } else {
+        setMessage({ type: 'error', text: 'Il collegamento non risulta ancora completato. Avvia il bot e riprova.' })
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Verifica Telegram non riuscita' })
+    } finally {
       setWorking(null)
     }
   }
@@ -277,6 +321,7 @@ export default function SettingsPage() {
       await authenticatedFetch('/api/telegram/connect', { method: 'DELETE' })
       const refreshed = await authenticatedFetch('/api/notifications/preferences') as NotificationPreferencesView
       setNotifications(refreshed)
+      setTelegramLink(null)
       setMessage({ type: 'success', text: 'Telegram scollegato.' })
     } catch (error) {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Scollegamento Telegram non riuscito' })
@@ -490,6 +535,51 @@ export default function SettingsPage() {
                     </button>
                   )}
                 </div>
+
+                {!notifications.telegram_connected && telegramLink && (
+                  <div className="mt-4 rounded-lg border border-sky-200 bg-white p-4">
+                    <p className="text-sm font-semibold text-gray-900">Collegamento pronto per 15 minuti</p>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Se su questo computer non hai l&apos;app Telegram, usa Telegram Web e invia il comando monouso al bot {telegramLink.bot_username}.
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      <a
+                        href={telegramLink.app_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg bg-sky-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-sky-700"
+                      >
+                        Apri nell&apos;app Telegram
+                      </a>
+                      <a
+                        href={telegramLink.web_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-center text-sm font-semibold text-sky-700 hover:bg-sky-100"
+                      >
+                        Apri Telegram Web
+                      </a>
+                    </div>
+                    <div className="mt-3 flex flex-col gap-2 rounded-lg bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <code className="overflow-x-auto text-xs text-gray-800">{telegramLink.start_command}</code>
+                      <button
+                        type="button"
+                        onClick={copyTelegramCommand}
+                        className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                      >
+                        Copia comando
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={checkTelegramConnection}
+                      disabled={working !== null}
+                      className="mt-3 text-sm font-semibold text-sky-700 hover:text-sky-900 disabled:opacity-50"
+                    >
+                      {working === 'telegram-check' ? 'Verifica in corso...' : 'Ho avviato il bot, verifica collegamento'}
+                    </button>
+                  </div>
+                )}
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
                   <label className="block">

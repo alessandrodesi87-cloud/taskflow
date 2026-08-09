@@ -16,8 +16,13 @@ export async function POST(request: NextRequest) {
       createTelegramLinkToken(context.admin, context.user.id),
       getTelegramBotUsername(),
     ])
+    const url = `https://t.me/${username}?start=${token}`
     return NextResponse.json({
-      url: `https://t.me/${username}?start=${token}`,
+      url,
+      app_url: url,
+      web_url: `https://web.telegram.org/k/#@${username}`,
+      bot_username: `@${username}`,
+      start_command: `/start ${token}`,
       expires_at: expiresAt,
     })
   } catch (error) {
@@ -45,4 +50,3 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: 'Impossibile scollegare Telegram' }, { status: 500 })
   }
 }
-
