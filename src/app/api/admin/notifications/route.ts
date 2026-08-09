@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/serverAuth'
 import { loadNotificationDefaults } from '@/lib/integrations/email'
+import { loadTelegramDefaults } from '@/lib/integrations/telegram'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,19 +14,28 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [defaults, { count, error: countError }] = await Promise.all([
+    const [emailDefaults, telegramDefaults, { data: preferences, error: preferencesError }] = await Promise.all([
       loadNotificationDefaults(context.admin),
+      loadTelegramDefaults(context.admin),
       context.admin
         .from('user_notification_preferences')
-        .select('*', { count: 'exact', head: true }),
+        .select('email_enabled_override, email_time_override, include_overdue_override, telegram_enabled_override, telegram_time_override'),
     ])
-    if (countError) throw countError
+    if (preferencesError) throw preferencesError
+    const personalizedUsers = (preferences || []).filter((preference) => (
+      preference.email_enabled_override !== null
+      || preference.email_time_override !== null
+      || preference.include_overdue_override !== null
+      || preference.telegram_enabled_override !== null
+      || preference.telegram_time_override !== null
+    )).length
 
     return NextResponse.json({
-      defaults,
-      personalized_users: count || 0,
+      defaults: { ...emailDefaults, ...telegramDefaults },
+      personalized_users: personalizedUsers,
       email_configured: Boolean(process.env.RESEND_API_KEY),
       replies_configured: Boolean(process.env.RESEND_REPLY_TO && process.env.RESEND_WEBHOOK_SECRET),
+      telegram_configured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
     })
   } catch (error) {
     console.error('Unable to load admin notification defaults:', error)
@@ -43,9 +53,12 @@ export async function PATCH(request: NextRequest) {
   if (
     !body
     || typeof body.email_enabled !== 'boolean'
+    || typeof body.telegram_enabled !== 'boolean'
     || typeof body.include_overdue !== 'boolean'
     || typeof body.email_time !== 'string'
+    || typeof body.telegram_time !== 'string'
     || !TIME_PATTERN.test(body.email_time)
+    || !TIME_PATTERN.test(body.telegram_time)
   ) {
     return NextResponse.json(
       { error: 'Scegli un orario compreso tra le 07:00 e le 22:00.' },
@@ -59,6 +72,8 @@ export async function PATCH(request: NextRequest) {
       .update({
         email_enabled: body.email_enabled,
         email_time: body.email_time,
+        telegram_enabled: body.telegram_enabled,
+        telegram_time: body.telegram_time,
         include_overdue: body.include_overdue,
         updated_by: context.user.id,
       })
@@ -68,7 +83,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ saved: true })
   } catch (error) {
     console.error('Unable to save admin notification defaults:', error)
-    return NextResponse.json({ error: 'Impossibile salvare le impostazioni email' }, { status: 500 })
+    return NextResponse.json({ error: 'Impossibile salvare le impostazioni di notifica' }, { status: 500 })
   }
 }
 

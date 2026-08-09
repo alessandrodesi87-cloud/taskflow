@@ -25,25 +25,34 @@ interface NotificationPreferencesView {
   defaults: {
     email_enabled: boolean
     email_time: string
+    telegram_enabled: boolean
+    telegram_time: string
     timezone: string
     include_overdue: boolean
   }
   overrides: {
     email_enabled: boolean | null
     email_time: string | null
+    telegram_enabled: boolean | null
+    telegram_time: string | null
     include_overdue: boolean | null
+    telegram_default_project_id: string | null
   }
   effective: {
     email_enabled: boolean
     email_time: string
+    telegram_enabled: boolean
+    telegram_time: string
     timezone: string
     include_overdue: boolean
   }
   using_defaults: boolean
   replies_enabled: boolean
+  telegram_connected: boolean
+  telegram_configured: boolean
   deliveries: Array<{
     id: string
-    notification_kind: 'daily_digest' | 'test'
+    notification_kind: 'daily_digest' | 'test' | 'telegram_daily' | 'telegram_test'
     delivery_date: string
     scheduled_for: string | null
     sent_at: string | null
@@ -209,16 +218,20 @@ export default function SettingsPage() {
         method: 'PATCH',
         body: JSON.stringify(notifications.using_defaults ? {
           use_defaults: true,
+          telegram_default_project_id: notifications.overrides.telegram_default_project_id,
         } : {
           use_defaults: false,
           email_enabled: notifications.effective.email_enabled,
           email_time: notifications.effective.email_time,
+          telegram_enabled: notifications.effective.telegram_enabled,
+          telegram_time: notifications.effective.telegram_time,
           include_overdue: notifications.effective.include_overdue,
+          telegram_default_project_id: notifications.overrides.telegram_default_project_id,
         }),
       })
       const refreshed = await authenticatedFetch('/api/notifications/preferences') as NotificationPreferencesView
       setNotifications(refreshed)
-      setMessage({ type: 'success', text: 'Preferenze email salvate.' })
+      setMessage({ type: 'success', text: 'Preferenze di notifica salvate.' })
     } catch (error) {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Salvataggio non riuscito' })
     } finally {
@@ -239,6 +252,50 @@ export default function SettingsPage() {
       setNotifications(refreshed)
     } catch (error) {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Invio di prova non riuscito' })
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  const connectTelegram = async () => {
+    setWorking('telegram-connect')
+    setMessage(null)
+    try {
+      const result = await authenticatedFetch('/api/telegram/connect', { method: 'POST' }) as { url: string }
+      window.location.assign(result.url)
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Collegamento Telegram non riuscito' })
+      setWorking(null)
+    }
+  }
+
+  const disconnectTelegram = async () => {
+    if (!window.confirm('Vuoi scollegare Telegram da TaskFlow?')) return
+    setWorking('telegram-disconnect')
+    setMessage(null)
+    try {
+      await authenticatedFetch('/api/telegram/connect', { method: 'DELETE' })
+      const refreshed = await authenticatedFetch('/api/notifications/preferences') as NotificationPreferencesView
+      setNotifications(refreshed)
+      setMessage({ type: 'success', text: 'Telegram scollegato.' })
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Scollegamento Telegram non riuscito' })
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  const sendTestTelegram = async () => {
+    setWorking('telegram-test')
+    setMessage(null)
+    try {
+      const result = await authenticatedFetch('/api/telegram/test', { method: 'POST' }) as { task_count: number }
+      setMessage({
+        type: 'success',
+        text: `Messaggio Telegram inviato. Contiene ${result.task_count} task da controllare.`,
+      })
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Invio Telegram non riuscito' })
     } finally {
       setWorking(null)
     }
@@ -286,20 +343,21 @@ export default function SettingsPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">La tua giornata</p>
-                  <h2 className="mt-1 text-xl font-semibold text-gray-900">Promemoria email</h2>
+                  <h2 className="mt-1 text-xl font-semibold text-gray-900">Promemoria email e Telegram</h2>
                   <p className="mt-2 max-w-2xl text-sm text-gray-600">
-                    Ricevi al mattino i task in scadenza e, se vuoi, anche quelli arretrati.
+                    Scegli quali canali usare e a che ora ricevere i task da controllare.
                   </p>
                 </div>
-                <span className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ${
-                  notifications.effective.email_enabled
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-gray-200 text-gray-600'
-                }`}>
-                  {notifications.effective.email_enabled
-                    ? `Attivo alle ${notifications.effective.email_time}`
-                    : 'Disattivato'}
-                </span>
+                <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                  <span className={`rounded-full px-3 py-1 ${notifications.effective.email_enabled ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
+                    {notifications.effective.email_enabled ? `Email ${notifications.effective.email_time}` : 'Email off'}
+                  </span>
+                  <span className={`rounded-full px-3 py-1 ${notifications.effective.telegram_enabled && notifications.telegram_connected ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>
+                    {notifications.telegram_connected
+                      ? (notifications.effective.telegram_enabled ? `Telegram ${notifications.effective.telegram_time}` : 'Telegram off')
+                      : 'Telegram da collegare'}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -318,29 +376,27 @@ export default function SettingsPage() {
                 <span>
                   <span className="block font-semibold text-gray-900">Usa le impostazioni consigliate dall’admin</span>
                   <span className="mt-1 block text-sm text-gray-500">
-                    Attualmente: {notifications.defaults.email_enabled ? 'attivo' : 'disattivato'} alle {notifications.defaults.email_time}
-                    {notifications.defaults.include_overdue ? ', arretrati inclusi' : ', solo scadenze di oggi'}.
+                    Email {notifications.defaults.email_enabled ? `alle ${notifications.defaults.email_time}` : 'disattivata'} · Telegram {notifications.defaults.telegram_enabled ? `alle ${notifications.defaults.telegram_time}` : 'disattivato'}
+                    {notifications.defaults.include_overdue ? ' · arretrati inclusi' : ' · solo scadenze di oggi'}.
                   </span>
                 </span>
               </label>
 
               {!notifications.using_defaults && (
-                <div className="grid gap-4 md:grid-cols-3">
-                  <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-4">
-                    <input
-                      type="checkbox"
-                      checked={notifications.effective.email_enabled}
-                      onChange={(event) => setNotifications((current) => current ? ({
-                        ...current,
-                        effective: { ...current.effective, email_enabled: event.target.checked },
-                      }) : current)}
-                      className="h-5 w-5 rounded border-gray-300 text-blue-600"
-                    />
-                    <span className="font-semibold text-gray-900">Ricevi email</span>
-                  </label>
-
-                  <label className="block rounded-lg border border-gray-200 p-4">
-                    <span className="block text-sm font-semibold text-gray-900">Il tuo orario</span>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <label className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={notifications.effective.email_enabled}
+                        onChange={(event) => setNotifications((current) => current ? ({
+                          ...current,
+                          effective: { ...current.effective, email_enabled: event.target.checked },
+                        }) : current)}
+                        className="h-5 w-5 rounded border-gray-300 text-blue-600"
+                      />
+                      <span className="font-semibold text-gray-900">Ricevi email</span>
+                    </label>
                     <input
                       type="time"
                       min="07:00"
@@ -351,12 +407,38 @@ export default function SettingsPage() {
                         effective: { ...current.effective, email_time: event.target.value },
                       }) : current)}
                       disabled={!notifications.effective.email_enabled}
-                      className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 disabled:bg-gray-100"
+                      className="mt-3 w-full rounded-md border border-gray-300 px-3 py-2 disabled:bg-gray-100"
                     />
-                    <span className="mt-1 block text-xs text-gray-500">Ora italiana · 07:00–22:00</span>
-                  </label>
+                  </div>
 
-                  <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-4">
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <label className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={notifications.effective.telegram_enabled}
+                        onChange={(event) => setNotifications((current) => current ? ({
+                          ...current,
+                          effective: { ...current.effective, telegram_enabled: event.target.checked },
+                        }) : current)}
+                        className="h-5 w-5 rounded border-gray-300 text-blue-600"
+                      />
+                      <span className="font-semibold text-gray-900">Ricevi Telegram</span>
+                    </label>
+                    <input
+                      type="time"
+                      min="07:00"
+                      max="22:00"
+                      value={notifications.effective.telegram_time}
+                      onChange={(event) => setNotifications((current) => current ? ({
+                        ...current,
+                        effective: { ...current.effective, telegram_time: event.target.value },
+                      }) : current)}
+                      disabled={!notifications.effective.telegram_enabled}
+                      className="mt-3 w-full rounded-md border border-gray-300 px-3 py-2 disabled:bg-gray-100"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-4 md:col-span-2">
                     <input
                       type="checkbox"
                       checked={notifications.effective.include_overdue}
@@ -364,19 +446,81 @@ export default function SettingsPage() {
                         ...current,
                         effective: { ...current.effective, include_overdue: event.target.checked },
                       }) : current)}
-                      disabled={!notifications.effective.email_enabled}
+                      disabled={!notifications.effective.email_enabled && !notifications.effective.telegram_enabled}
                       className="h-5 w-5 rounded border-gray-300 text-blue-600 disabled:opacity-50"
                     />
                     <span>
                       <span className="block font-semibold text-gray-900">Includi arretrati</span>
-                      <span className="block text-xs text-gray-500">Anche task già scaduti</span>
+                      <span className="block text-xs text-gray-500">Vale per entrambi i canali</span>
                     </span>
                   </label>
                 </div>
               )}
 
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-900">Bot Telegram</h3>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${notifications.telegram_connected ? 'bg-green-100 text-green-700' : 'bg-white text-gray-600'}`}>
+                        {notifications.telegram_connected ? 'Collegato' : 'Non collegato'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Dal bot puoi vedere le scadenze, completare task e crearne di nuovi scrivendo un messaggio.
+                    </p>
+                  </div>
+                  {notifications.telegram_connected ? (
+                    <button
+                      type="button"
+                      onClick={disconnectTelegram}
+                      disabled={working !== null}
+                      className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {working === 'telegram-disconnect' ? 'Scollegamento...' : 'Scollega'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={connectTelegram}
+                      disabled={working !== null || !notifications.telegram_configured}
+                      className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+                    >
+                      {working === 'telegram-connect' ? 'Collegamento...' : 'Collega Telegram'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Progetto per i nuovi task dal bot</span>
+                    <select
+                      value={notifications.overrides.telegram_default_project_id || ''}
+                      onChange={(event) => setNotifications((current) => current ? ({
+                        ...current,
+                        overrides: { ...current.overrides, telegram_default_project_id: event.target.value || null },
+                      }) : current)}
+                      className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="">Scegli un progetto</option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>{project.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={sendTestTelegram}
+                    disabled={working !== null || !notifications.telegram_connected}
+                    className="rounded-lg border border-sky-200 bg-white px-4 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50"
+                  >
+                    {working === 'telegram-test' ? 'Invio...' : 'Invia test Telegram'}
+                  </button>
+                </div>
+              </div>
+
               <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600">
-                Le email riguardano i task assegnati a te; se un task non ha assegnatario, viene incluso quando ne sei il proprietario.
+                I promemoria riguardano i task assegnati a te; se un task non ha assegnatario, viene incluso quando ne sei il proprietario.
                 {notifications.replies_enabled
                   ? ' Puoi anche rispondere all’email per completare o riprogrammare un task.'
                   : ''}
@@ -384,9 +528,7 @@ export default function SettingsPage() {
             </div>
 
             <div className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-gray-500">
-                Le modifiche valgono dal prossimo promemoria. Il test viene inviato subito.
-              </p>
+              <p className="text-xs text-gray-500">Le modifiche valgono dal prossimo promemoria.</p>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
