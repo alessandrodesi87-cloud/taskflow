@@ -26,6 +26,7 @@ export interface TelegramPreferenceRow {
   telegram_time_override: string | null
   include_overdue_override: boolean | null
   telegram_default_project_id: string | null
+  notification_project_ids: string[]
 }
 
 export interface TelegramUpdate {
@@ -268,7 +269,8 @@ async function loadReminderTasks(
   admin: SupabaseClient,
   userId: string,
   deliveryDate: string,
-  includeOverdue: boolean
+  includeOverdue: boolean,
+  projectIds: string[] = []
 ) {
   let query = admin
     .from('tasks')
@@ -277,6 +279,8 @@ async function loadReminderTasks(
     .or(`assignee_id.eq.${userId},and(assignee_id.is.null,owner_id.eq.${userId})`)
     .order('due_date', { ascending: true })
     .limit(MAX_REMINDER_TASKS)
+
+  if (projectIds.length > 0) query = query.in('project_id', projectIds)
 
   query = includeOverdue
     ? query.lte('due_date', deliveryDate)
@@ -433,7 +437,7 @@ async function sendCurrentTasks(admin: SupabaseClient, user: TelegramUserRow) {
   const [defaults, { data: preference, error: preferenceError }] = await Promise.all([
     loadTelegramDefaults(admin),
     admin.from('user_notification_preferences')
-      .select('user_id, telegram_enabled_override, telegram_time_override, include_overdue_override, telegram_default_project_id')
+      .select('user_id, telegram_enabled_override, telegram_time_override, include_overdue_override, telegram_default_project_id, notification_project_ids')
       .eq('user_id', user.id)
       .maybeSingle(),
   ])
@@ -444,7 +448,8 @@ async function sendCurrentTasks(admin: SupabaseClient, user: TelegramUserRow) {
     admin,
     user.id,
     deliveryDate,
-    effective.include_overdue
+    effective.include_overdue,
+    (preference as TelegramPreferenceRow | null)?.notification_project_ids || []
   )
   const content = buildReminderMessage(user.full_name, tasks, deliveryDate)
   await sendTelegramMessage(user.telegram_chat_id, content.text, content.replyMarkup)
@@ -552,7 +557,7 @@ export async function dispatchTelegramReminders(admin: SupabaseClient, now = new
       .select('id, full_name, telegram_chat_id')
       .not('telegram_chat_id', 'is', null),
     admin.from('user_notification_preferences')
-      .select('user_id, telegram_enabled_override, telegram_time_override, include_overdue_override, telegram_default_project_id'),
+      .select('user_id, telegram_enabled_override, telegram_time_override, include_overdue_override, telegram_default_project_id, notification_project_ids'),
   ])
   if (usersError) throw new Error(usersError.message)
   if (preferencesError) throw new Error(preferencesError.message)
@@ -626,11 +631,13 @@ export async function dispatchTelegramReminders(admin: SupabaseClient, now = new
     }
 
     try {
+      const preference = preferenceMap.get(user.id)
       const tasks = await loadReminderTasks(
         admin,
         user.id,
         current.date,
-        effective.include_overdue
+        effective.include_overdue,
+        preference?.notification_project_ids || []
       )
       if (tasks.length === 0) {
         await admin.from('notification_deliveries')
@@ -673,7 +680,7 @@ export async function sendTestTelegramReminder(admin: SupabaseClient, userId: st
       .eq('id', userId)
       .single(),
     admin.from('user_notification_preferences')
-      .select('user_id, telegram_enabled_override, telegram_time_override, include_overdue_override, telegram_default_project_id')
+      .select('user_id, telegram_enabled_override, telegram_time_override, include_overdue_override, telegram_default_project_id, notification_project_ids')
       .eq('user_id', userId)
       .maybeSingle(),
   ])
@@ -683,7 +690,13 @@ export async function sendTestTelegramReminder(admin: SupabaseClient, userId: st
   if (preferenceError) throw new Error(preferenceError.message)
   const effective = mergeTelegramPreferences(defaults, preference as TelegramPreferenceRow | null)
   const deliveryDate = localDateAndTime(new Date(), effective.timezone).date
-  const tasks = await loadReminderTasks(admin, userId, deliveryDate, effective.include_overdue)
+  const tasks = await loadReminderTasks(
+    admin,
+    userId,
+    deliveryDate,
+    effective.include_overdue,
+    (preference as TelegramPreferenceRow | null)?.notification_project_ids || []
+  )
   const content = buildReminderMessage(user.full_name, tasks, deliveryDate, true)
   const message = await sendTelegramMessage(user.telegram_chat_id, content.text, content.replyMarkup)
 

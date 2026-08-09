@@ -13,34 +13,46 @@ import {
 export const dynamic = 'force-dynamic'
 
 const TIME_PATTERN = /^(0[7-9]|1\d|2[0-2]):[0-5]\d$/
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const MAX_NOTIFICATION_PROJECTS = 50
 
 function timeValue(value: unknown) {
   if (typeof value !== 'string' || !TIME_PATTERN.test(value)) return null
   return value
 }
 
-async function canUseProject(
+function projectIdsValue(value: unknown) {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > MAX_NOTIFICATION_PROJECTS) return null
+  if (value.some((projectId) => typeof projectId !== 'string' || !UUID_PATTERN.test(projectId))) {
+    return null
+  }
+  return Array.from(new Set(value as string[]))
+}
+
+async function canUseProjects(
   admin: SupabaseClient,
   userId: string,
-  projectId: string
+  projectIds: string[]
 ) {
-  const { data: project, error: projectError } = await admin
-    .from('projects')
-    .select('owner_id')
-    .eq('id', projectId)
-    .maybeSingle()
-  if (projectError) throw projectError
-  if (!project) return false
-  if (project.owner_id === userId) return true
-
-  const { data: membership, error: membershipError } = await admin
-    .from('project_members')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('user_id', userId)
-    .maybeSingle()
+  if (projectIds.length === 0) return true
+  const [{ data: owned, error: ownedError }, { data: memberships, error: membershipError }] = await Promise.all([
+    admin.from('projects')
+      .select('id')
+      .in('id', projectIds)
+      .eq('owner_id', userId),
+    admin.from('project_members')
+      .select('project_id')
+      .in('project_id', projectIds)
+      .eq('user_id', userId),
+  ])
+  if (ownedError) throw ownedError
   if (membershipError) throw membershipError
-  return Boolean(membership)
+  const availableIds = new Set([
+    ...(owned || []).map((project) => project.id),
+    ...(memberships || []).map((membership) => membership.project_id),
+  ])
+  return projectIds.every((projectId) => availableIds.has(projectId))
 }
 
 export async function GET(request: NextRequest) {
@@ -55,7 +67,7 @@ export async function GET(request: NextRequest) {
       loadTelegramDefaults(context.admin),
       context.admin
         .from('user_notification_preferences')
-        .select('user_id, email_enabled_override, email_time_override, include_overdue_override, telegram_enabled_override, telegram_time_override, telegram_default_project_id')
+        .select('user_id, email_enabled_override, email_time_override, include_overdue_override, telegram_enabled_override, telegram_time_override, telegram_default_project_id, notification_project_ids')
         .eq('user_id', context.user.id)
         .maybeSingle(),
       context.admin
@@ -84,6 +96,7 @@ export async function GET(request: NextRequest) {
       telegram_time: preference.telegram_time_override?.slice(0, 5) || null,
       include_overdue: preference.include_overdue_override,
       telegram_default_project_id: preference.telegram_default_project_id,
+      notification_project_ids: preference.notification_project_ids || [],
     } : {
       email_enabled: null,
       email_time: null,
@@ -91,6 +104,7 @@ export async function GET(request: NextRequest) {
       telegram_time: null,
       include_overdue: null,
       telegram_default_project_id: null,
+      notification_project_ids: [],
     }
 
     const effectiveEmail = mergeNotificationPreferences(emailDefaults, preference)
@@ -134,9 +148,18 @@ export async function PATCH(request: NextRequest) {
       && body.telegram_default_project_id.length > 0
       ? body.telegram_default_project_id
       : null
+    const notificationProjectIds = projectIdsValue(body.notification_project_ids)
 
-    if (defaultProjectId && !await canUseProject(context.admin, context.user.id, defaultProjectId)) {
-      return NextResponse.json({ error: 'Il progetto scelto non è disponibile' }, { status: 400 })
+    if (!notificationProjectIds) {
+      return NextResponse.json({ error: 'La selezione dei progetti non è valida' }, { status: 400 })
+    }
+
+    const requestedProjectIds = Array.from(new Set([
+      ...notificationProjectIds,
+      ...(defaultProjectId ? [defaultProjectId] : []),
+    ]))
+    if (!await canUseProjects(context.admin, context.user.id, requestedProjectIds)) {
+      return NextResponse.json({ error: 'Uno o più progetti scelti non sono disponibili' }, { status: 400 })
     }
 
     if (body.use_defaults === true) {
@@ -150,6 +173,7 @@ export async function PATCH(request: NextRequest) {
           telegram_time_override: null,
           include_overdue_override: null,
           telegram_default_project_id: defaultProjectId,
+          notification_project_ids: notificationProjectIds,
         }, { onConflict: 'user_id' })
       if (error) throw error
       return NextResponse.json({ saved: true, using_defaults: true })
@@ -178,6 +202,7 @@ export async function PATCH(request: NextRequest) {
         telegram_time_override: body.telegram_time,
         include_overdue_override: body.include_overdue,
         telegram_default_project_id: defaultProjectId,
+        notification_project_ids: notificationProjectIds,
       }, { onConflict: 'user_id' })
 
     if (error) throw error

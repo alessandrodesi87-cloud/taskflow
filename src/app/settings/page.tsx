@@ -46,6 +46,7 @@ interface NotificationPreferencesView {
     telegram_time: string | null
     include_overdue: boolean | null
     telegram_default_project_id: string | null
+    notification_project_ids: string[]
   }
   effective: {
     email_enabled: boolean
@@ -229,6 +230,7 @@ export default function SettingsPage() {
         body: JSON.stringify(notifications.using_defaults ? {
           use_defaults: true,
           telegram_default_project_id: notifications.overrides.telegram_default_project_id,
+          notification_project_ids: notifications.overrides.notification_project_ids,
         } : {
           use_defaults: false,
           email_enabled: notifications.effective.email_enabled,
@@ -237,6 +239,7 @@ export default function SettingsPage() {
           telegram_time: notifications.effective.telegram_time,
           include_overdue: notifications.effective.include_overdue,
           telegram_default_project_id: notifications.overrides.telegram_default_project_id,
+          notification_project_ids: notifications.overrides.notification_project_ids,
         }),
       })
       const refreshed = await authenticatedFetch('/api/notifications/preferences') as NotificationPreferencesView
@@ -265,6 +268,28 @@ export default function SettingsPage() {
     } finally {
       setWorking(null)
     }
+  }
+
+  const toggleNotificationProject = (projectId: string, checked: boolean) => {
+    const availableProjectIds = projects.map((project) => project.id)
+    setNotifications((current) => {
+      if (!current) return current
+      const selectedIds = current.overrides.notification_project_ids.length === 0
+        ? availableProjectIds
+        : current.overrides.notification_project_ids
+      const nextIds = checked
+        ? Array.from(new Set([...selectedIds, projectId]))
+        : selectedIds.filter((selectedId) => selectedId !== projectId)
+
+      if (nextIds.length === 0) return current
+      return {
+        ...current,
+        overrides: {
+          ...current.overrides,
+          notification_project_ids: nextIds.length === availableProjectIds.length ? [] : nextIds,
+        },
+      }
+    })
   }
 
   const connectTelegram = async () => {
@@ -502,6 +527,55 @@ export default function SettingsPage() {
                 </div>
               )}
 
+              <div className="rounded-xl border border-violet-200 bg-violet-50 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h3 className="font-semibold text-gray-900">Progetti nei promemoria</h3>
+                    <p className="mt-1 text-sm text-gray-600">
+                      Scegli quali progetti includere. Il filtro vale per email, Telegram, /today e messaggi di prova.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNotifications((current) => current ? ({
+                      ...current,
+                      overrides: { ...current.overrides, notification_project_ids: [] },
+                    }) : current)}
+                    disabled={notifications.overrides.notification_project_ids.length === 0}
+                    className="shrink-0 rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-default disabled:bg-violet-100 disabled:text-violet-500"
+                  >
+                    Tutti i progetti
+                  </button>
+                </div>
+
+                <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-violet-700">
+                  {notifications.overrides.notification_project_ids.length === 0
+                    ? 'Sono inclusi tutti i progetti'
+                    : `${notifications.overrides.notification_project_ids.length} progetti selezionati`}
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {projects.map((project) => {
+                    const allProjectsIncluded = notifications.overrides.notification_project_ids.length === 0
+                    const projectIncluded = allProjectsIncluded
+                      || notifications.overrides.notification_project_ids.includes(project.id)
+                    return (
+                      <label
+                        key={project.id}
+                        className="flex cursor-pointer items-center gap-3 rounded-lg border border-violet-100 bg-white px-3 py-2.5 text-sm text-gray-800"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={projectIncluded}
+                          onChange={(event) => toggleNotificationProject(project.id, event.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-violet-600"
+                        />
+                        <span className="truncate">{project.name}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+
               <div className="rounded-xl border border-sky-200 bg-sky-50 p-5">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                   <div>
@@ -597,6 +671,9 @@ export default function SettingsPage() {
                         <option key={project.id} value={project.id}>{project.name}</option>
                       ))}
                     </select>
+                    <span className="mt-1 block text-xs text-gray-500">
+                      Serve solo per decidere dove salvare i task creati scrivendo al bot.
+                    </span>
                   </label>
                   <button
                     type="button"
