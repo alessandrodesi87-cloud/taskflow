@@ -139,7 +139,11 @@ export default function AdminPage() {
       })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.error || 'Salvataggio non riuscito')
-      setNotificationMessage('Impostazioni predefinite salvate.')
+      setNotificationMessage(
+        payload.telegram_webhook_configured
+          ? 'Impostazioni salvate e Telegram attivo in produzione.'
+          : 'Impostazioni predefinite salvate.'
+      )
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Errore inatteso')
     } finally {

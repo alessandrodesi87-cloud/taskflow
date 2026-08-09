@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/serverAuth'
 import { loadNotificationDefaults } from '@/lib/integrations/email'
-import { loadTelegramDefaults } from '@/lib/integrations/telegram'
+import {
+  configureTelegramWebhook,
+  loadTelegramDefaults,
+} from '@/lib/integrations/telegram'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,6 +70,12 @@ export async function PATCH(request: NextRequest) {
   }
 
   try {
+    const telegramWebhookUrl = process.env.TELEGRAM_BOT_TOKEN
+      ? await configureTelegramWebhook(
+        process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin
+      )
+      : null
+
     const { error } = await context.admin
       .from('notification_defaults')
       .update({
@@ -80,7 +89,10 @@ export async function PATCH(request: NextRequest) {
       .eq('id', 1)
 
     if (error) throw error
-    return NextResponse.json({ saved: true })
+    return NextResponse.json({
+      saved: true,
+      telegram_webhook_configured: Boolean(telegramWebhookUrl),
+    })
   } catch (error) {
     console.error('Unable to save admin notification defaults:', error)
     return NextResponse.json({ error: 'Impossibile salvare le impostazioni di notifica' }, { status: 500 })

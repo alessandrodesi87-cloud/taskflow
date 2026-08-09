@@ -161,6 +161,22 @@ export function verifyTelegramDispatchSecret(received: string | null) {
   return secretMatches(token || null, getTelegramDispatchSecret())
 }
 
+export async function configureTelegramWebhook(appOrigin: string) {
+  const webhookUrl = new URL('/api/telegram/webhook', appOrigin)
+  if (webhookUrl.protocol !== 'https:') {
+    throw new Error('Telegram webhook requires an HTTPS application URL')
+  }
+
+  await telegramRequest<boolean>('setWebhook', {
+    url: webhookUrl.toString(),
+    secret_token: getTelegramWebhookSecret(),
+    allowed_updates: ['message', 'callback_query'],
+    drop_pending_updates: false,
+  })
+
+  return webhookUrl.toString()
+}
+
 async function telegramRequest<T>(method: string, payload?: Record<string, unknown>) {
   const response = await fetch(`${TELEGRAM_API_URL}/bot${getBotToken()}/${method}`, {
     method: 'POST',
