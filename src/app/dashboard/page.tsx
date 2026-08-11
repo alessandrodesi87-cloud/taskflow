@@ -64,6 +64,7 @@ export default function DashboardPage() {
   const [dueFilter, setDueFilter] = useState<DueFilter>('all')
   const [projectFilter, setProjectFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState<'all' | Task['priority']>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | Task['status']>('all')
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>([])
   const router = useRouter()
 
@@ -191,7 +192,8 @@ export default function DashboardPage() {
 
     return tasks.filter((task) => {
       if (projectFilter !== 'all' && task.project_id !== projectFilter) return false
-      if (!showCompleted && task.status === 'done') return false
+      if (statusFilter !== 'all' && task.status !== statusFilter) return false
+      if (statusFilter === 'all' && !showCompleted && task.status === 'done') return false
       if (assigneeFilter === 'mine' && task.assignee_id !== user?.id) return false
       if (assigneeFilter === 'unassigned' && task.assignee_id) return false
       if (priorityFilter !== 'all' && task.priority !== priorityFilter) return false
@@ -199,7 +201,7 @@ export default function DashboardPage() {
       if (dueFilter === 'upcoming' && (task.due_date < today || task.due_date > upcoming)) return false
       return true
     })
-  }, [assigneeFilter, dueFilter, priorityFilter, projectFilter, showCompleted, tasks, user?.id])
+  }, [assigneeFilter, dueFilter, priorityFilter, projectFilter, showCompleted, statusFilter, tasks, user?.id])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -479,11 +481,11 @@ export default function DashboardPage() {
                   Prossimi 7 giorni
                 </button>
                 <label className="ml-auto flex items-center gap-2 text-sm font-medium text-gray-700">
-                  <input type="checkbox" checked={showCompleted} onChange={(event) => setShowCompleted(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600" />
+                  <input type="checkbox" checked={showCompleted} onChange={(event) => { setShowCompleted(event.target.checked); if (!event.target.checked && statusFilter === 'done') setStatusFilter('all') }} className="h-4 w-4 rounded border-gray-300 text-blue-600" />
                   Mostra completati
                 </label>
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
                 <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" aria-label="Filtra per progetto">
                   <option value="all">Tutti i progetti</option>
                   {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
@@ -495,7 +497,13 @@ export default function DashboardPage() {
                   <option value="medium">Normale</option>
                   <option value="low">Bassa</option>
                 </select>
-                <button type="button" onClick={() => { setAssigneeFilter('all'); setDueFilter('all'); setProjectFilter('all'); setPriorityFilter('all'); setShowCompleted(false) }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                <select value={statusFilter} onChange={(event) => { const nextStatus = event.target.value as 'all' | Task['status']; setStatusFilter(nextStatus); if (nextStatus === 'done') setShowCompleted(true) }} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" aria-label="Filtra per stato">
+                  <option value="all">Tutti gli stati attivi</option>
+                  <option value="todo">Da fare</option>
+                  <option value="in_progress">In corso</option>
+                  <option value="done">Completati</option>
+                </select>
+                <button type="button" onClick={() => { setAssigneeFilter('all'); setDueFilter('all'); setProjectFilter('all'); setPriorityFilter('all'); setStatusFilter('all'); setShowCompleted(false) }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
                   Ripristina filtri
                 </button>
               </div>
