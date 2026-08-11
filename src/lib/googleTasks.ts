@@ -15,6 +15,7 @@ interface OAuthStatePayload {
   userId: string
   nonce: string
   redirectUri: string
+  returnOrigin?: string
   expiresAt: number
 }
 
@@ -82,17 +83,8 @@ function signState(encodedPayload: string, secret: string) {
   return createHmac('sha256', secret).update(encodedPayload).digest('base64url')
 }
 
-export function createGoogleAuthorization(userId: string, redirectUri: string) {
-  const { clientId, clientSecret } = getGoogleCredentials()
-  const nonce = randomBytes(32).toString('base64url')
-  const payload: OAuthStatePayload = {
-    userId,
-    nonce,
-    redirectUri,
-    expiresAt: Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS,
-  }
-  const encodedPayload = toBase64Url(JSON.stringify(payload))
-  const state = `${encodedPayload}.${signState(encodedPayload, clientSecret)}`
+function buildGoogleAuthorizationUrl(state: string, redirectUri: string) {
+  const { clientId } = getGoogleCredentials()
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -108,18 +100,35 @@ export function createGoogleAuthorization(userId: string, redirectUri: string) {
     state,
   })
 
+  return `${GOOGLE_AUTH_URL}?${params.toString()}`
+}
+
+export function createGoogleAuthorization(userId: string, redirectUri: string, returnOrigin?: string) {
+  const { clientSecret } = getGoogleCredentials()
+  const nonce = randomBytes(32).toString('base64url')
+  const payload: OAuthStatePayload = {
+    userId,
+    nonce,
+    redirectUri,
+    returnOrigin: returnOrigin ? new URL(returnOrigin).origin : new URL(redirectUri).origin,
+    expiresAt: Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS,
+  }
+  const encodedPayload = toBase64Url(JSON.stringify(payload))
+  const state = `${encodedPayload}.${signState(encodedPayload, clientSecret)}`
+
   return {
-    authorizationUrl: `${GOOGLE_AUTH_URL}?${params.toString()}`,
+    authorizationUrl: buildGoogleAuthorizationUrl(state, redirectUri),
+    state,
     nonce,
     maxAge: OAUTH_STATE_TTL_SECONDS,
   }
 }
 
-export function verifyGoogleOAuthState(state: string, cookieNonce: string | undefined) {
+function verifySignedGoogleOAuthState(state: string) {
   const { clientSecret } = getGoogleCredentials()
   const [encodedPayload, receivedSignature, ...rest] = state.split('.')
 
-  if (!encodedPayload || !receivedSignature || rest.length > 0 || !cookieNonce) {
+  if (!encodedPayload || !receivedSignature || rest.length > 0) {
     throw new Error('Collegamento Google non valido o scaduto')
   }
 
@@ -144,9 +153,33 @@ export function verifyGoogleOAuthState(state: string, cookieNonce: string | unde
   if (
     !payload.userId ||
     !payload.redirectUri ||
-    payload.nonce !== cookieNonce ||
+    !payload.nonce ||
     payload.expiresAt < Math.floor(Date.now() / 1000)
   ) {
+    throw new Error('Collegamento Google non valido o scaduto')
+  }
+
+  return payload
+}
+
+export function resumeGoogleAuthorization(state: string) {
+  const payload = verifySignedGoogleOAuthState(state)
+  return {
+    authorizationUrl: buildGoogleAuthorizationUrl(state, payload.redirectUri),
+    nonce: payload.nonce,
+    redirectUri: payload.redirectUri,
+    returnOrigin: payload.returnOrigin || new URL(payload.redirectUri).origin,
+    maxAge: Math.max(0, payload.expiresAt - Math.floor(Date.now() / 1000)),
+  }
+}
+
+export function verifyGoogleOAuthState(state: string, cookieNonce: string | undefined) {
+  if (!cookieNonce) {
+    throw new Error('Collegamento Google non valido o scaduto')
+  }
+
+  const payload = verifySignedGoogleOAuthState(state)
+  if (payload.nonce !== cookieNonce) {
     throw new Error('Collegamento Google non valido o scaduto')
   }
 

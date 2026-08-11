@@ -29,8 +29,22 @@ export async function POST(request: NextRequest) {
 
   try {
     const redirectUri = getGoogleRedirectUri(request)
-    const authorization = createGoogleAuthorization(authenticated.user.id, redirectUri)
-    const response = NextResponse.json({ url: authorization.authorizationUrl })
+    const authorization = createGoogleAuthorization(
+      authenticated.user.id,
+      redirectUri,
+      request.nextUrl.origin,
+    )
+    const callbackOrigin = new URL(redirectUri).origin
+    const usesStableBridge = callbackOrigin !== request.nextUrl.origin
+    const startUrl = usesStableBridge
+      ? new URL(`/api/google/start?state=${encodeURIComponent(authorization.state)}`, callbackOrigin).toString()
+      : authorization.authorizationUrl
+    const response = NextResponse.json({ url: startUrl })
+
+    if (usesStableBridge) {
+      return response
+    }
+
     response.cookies.set(GOOGLE_OAUTH_COOKIE, authorization.nonce, {
       httpOnly: true,
       secure: redirectUri.startsWith('https://'),

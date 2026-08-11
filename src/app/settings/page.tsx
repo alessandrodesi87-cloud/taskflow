@@ -916,6 +916,9 @@ export default function SettingsPage() {
               <p className="mt-1 text-sm text-gray-500">
                 I token Google sono conservati in modo protetto e non vengono inviati al browser.
               </p>
+              <p className="mt-2 text-xs text-amber-700">
+                In fase di collaudo, se Google mostra “Accesso bloccato”, la nuova email deve essere abilitata tra gli utenti di test del progetto Google Cloud.
+              </p>
             </div>
             <button
               type="button"

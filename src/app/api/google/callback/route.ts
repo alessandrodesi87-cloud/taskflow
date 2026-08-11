@@ -9,8 +9,8 @@ import {
 
 export const dynamic = 'force-dynamic'
 
-function settingsRedirect(redirectUri: string, result: 'connected' | 'error') {
-  const url = new URL('/settings', new URL(redirectUri).origin)
+function settingsRedirect(origin: string, result: 'connected' | 'error') {
+  const url = new URL('/settings', origin)
   url.searchParams.set('google', result)
   return url
 }
@@ -28,6 +28,7 @@ function clearOAuthCookie(response: NextResponse) {
 export async function GET(request: NextRequest) {
   const state = request.nextUrl.searchParams.get('state') || ''
   let redirectUri = `${request.nextUrl.origin}/api/google/callback`
+  let returnOrigin = request.nextUrl.origin
 
   try {
     const payload = verifyGoogleOAuthState(
@@ -35,6 +36,7 @@ export async function GET(request: NextRequest) {
       request.cookies.get(GOOGLE_OAUTH_COOKIE)?.value,
     )
     redirectUri = payload.redirectUri
+    returnOrigin = payload.returnOrigin || new URL(redirectUri).origin
 
     const providerError = request.nextUrl.searchParams.get('error')
     const code = request.nextUrl.searchParams.get('code')
@@ -73,12 +75,12 @@ export async function GET(request: NextRequest) {
 
     if (saveError) throw new Error('Impossibile salvare il collegamento Google')
 
-    const response = NextResponse.redirect(settingsRedirect(redirectUri, 'connected'))
+    const response = NextResponse.redirect(settingsRedirect(returnOrigin, 'connected'))
     clearOAuthCookie(response)
     return response
   } catch (error) {
     console.error('Google OAuth callback failed:', error instanceof Error ? error.message : error)
-    const response = NextResponse.redirect(settingsRedirect(redirectUri, 'error'))
+    const response = NextResponse.redirect(settingsRedirect(returnOrigin, 'error'))
     clearOAuthCookie(response)
     return response
   }
