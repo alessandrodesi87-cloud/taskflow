@@ -419,11 +419,32 @@ async function syncGoogleAccount(admin: SupabaseClient, account: GoogleAccount) 
 export async function syncGoogleTasks(
   admin: SupabaseClient,
   userId?: string,
+  accountId?: string,
 ): Promise<GoogleSyncResult> {
   let query = admin
     .from('gmail_accounts')
     .select('id, user_id, email, access_token, refresh_token, default_project_id')
-  if (userId) query = query.eq('user_id', userId)
+  if (userId) {
+    query = query.eq('user_id', userId)
+  } else {
+    const { data: activeUsers, error: activeUsersError } = await admin
+      .from('users')
+      .select('id')
+      .eq('is_active', true)
+    if (activeUsersError) throw new Error('Impossibile verificare gli utenti attivi')
+    const activeUserIds = (activeUsers || []).map((activeUser) => activeUser.id)
+    if (activeUserIds.length === 0) {
+      return {
+        accounts: 0,
+        imported: 0,
+        completedInGoogle: 0,
+        skipped: 0,
+        failures: [],
+      }
+    }
+    query = query.in('user_id', activeUserIds)
+  }
+  if (accountId) query = query.eq('id', accountId)
 
   const { data, error } = await query
   if (error) throw new Error('Impossibile leggere gli account Google collegati')
@@ -443,11 +464,30 @@ export async function syncGoogleTasks(
       result.imported += accountResult.imported
       result.completedInGoogle += accountResult.completedInGoogle
       result.skipped += accountResult.skipped
+      await admin
+        .from('gmail_accounts')
+        .update({
+          last_sync_at: new Date().toISOString(),
+          last_sync_status: 'success',
+          last_sync_error: null,
+        })
+        .eq('id', account.id)
+        .eq('user_id', account.user_id)
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Errore di sincronizzazione'
       result.failures.push({
         email: account.email,
-        message: error instanceof Error ? error.message : 'Errore di sincronizzazione',
+        message,
       })
+      await admin
+        .from('gmail_accounts')
+        .update({
+          last_sync_at: new Date().toISOString(),
+          last_sync_status: 'error',
+          last_sync_error: message.slice(0, 500),
+        })
+        .eq('id', account.id)
+        .eq('user_id', account.user_id)
     }
   }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import AppHeader from '@/components/AppHeader'
 
 interface UserInfo {
   id: string
@@ -11,6 +12,25 @@ interface UserInfo {
   role: string
   phone?: string
   telegram_chat_id?: string
+  is_active: boolean
+  suspended_at?: string | null
+  last_sign_in_at?: string | null
+}
+
+interface AdminProjectInfo {
+  id: string
+  name: string
+  owner_id: string
+  start_date: string
+  end_date: string
+  task_count: number
+  open_task_count: number
+  owner?: {
+    id: string
+    email?: string
+    full_name?: string
+    is_active: boolean
+  } | null
 }
 
 interface NotificationAdminSettings {
@@ -30,6 +50,7 @@ interface NotificationAdminSettings {
 
 export default function AdminPage() {
   const [users, setUsers] = useState<UserInfo[]>([])
+  const [projects, setProjects] = useState<AdminProjectInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
   const [newUserEmail, setNewUserEmail] = useState('')
@@ -39,6 +60,12 @@ export default function AdminPage() {
   const [notificationSettings, setNotificationSettings] = useState<NotificationAdminSettings | null>(null)
   const [savingNotifications, setSavingNotifications] = useState(false)
   const [notificationMessage, setNotificationMessage] = useState('')
+  const [currentUserId, setCurrentUserId] = useState('')
+  const [currentUserEmail, setCurrentUserEmail] = useState('')
+  const [replacementByUser, setReplacementByUser] = useState<Record<string, string>>({})
+  const [ownerByProject, setOwnerByProject] = useState<Record<string, string>>({})
+  const [workingItem, setWorkingItem] = useState<string | null>(null)
+  const [adminMessage, setAdminMessage] = useState('')
   const router = useRouter()
 
   useEffect(() => {
@@ -51,9 +78,10 @@ export default function AdminPage() {
         }
 
         const headers = { Authorization: `Bearer ${session.access_token}` }
-        const [response, notificationsResponse] = await Promise.all([
+        const [response, notificationsResponse, projectsResponse] = await Promise.all([
           fetch('/api/admin/users', { headers }),
           fetch('/api/admin/notifications', { headers }),
+          fetch('/api/admin/projects', { headers }),
         ])
 
         if (response.status === 401) {
@@ -68,11 +96,19 @@ export default function AdminPage() {
         if (!notificationsResponse.ok) {
           throw new Error('Impossibile caricare le impostazioni email')
         }
+        if (!projectsResponse.ok) {
+          throw new Error('Impossibile caricare i progetti')
+        }
 
         const payload = await response.json()
         const notificationsPayload = await notificationsResponse.json()
+        const projectsPayload = await projectsResponse.json()
         setAccessToken(session.access_token)
+        setCurrentUserId(session.user.id)
+        setCurrentUserEmail(session.user.email || '')
         setUsers(payload.users || [])
+        setProjects(projectsPayload.projects || [])
+        setOwnerByProject(Object.fromEntries((projectsPayload.projects || []).map((project: AdminProjectInfo) => [project.id, project.owner_id])))
         setNotificationSettings(notificationsPayload)
         setIsAdmin(true)
       } catch (error) {
@@ -122,6 +158,86 @@ export default function AdminPage() {
     }
   }
 
+  const reloadPeopleAndProjects = async () => {
+    const headers = { Authorization: `Bearer ${accessToken}` }
+    const [usersResponse, projectsResponse] = await Promise.all([
+      fetch('/api/admin/users', { headers }),
+      fetch('/api/admin/projects', { headers }),
+    ])
+    if (!usersResponse.ok || !projectsResponse.ok) {
+      throw new Error('Aggiornamento dati amministrativi non riuscito')
+    }
+    const usersPayload = await usersResponse.json()
+    const projectsPayload = await projectsResponse.json()
+    setUsers(usersPayload.users || [])
+    setProjects(projectsPayload.projects || [])
+    setOwnerByProject(Object.fromEntries((projectsPayload.projects || []).map((project: AdminProjectInfo) => [project.id, project.owner_id])))
+  }
+
+  const changeUserStatus = async (user: UserInfo) => {
+    const action = user.is_active ? 'suspend' : 'reactivate'
+    if (action === 'suspend' && !window.confirm(`Sospendere ${user.email}? I suoi dati non verranno cancellati.`)) return
+
+    setWorkingItem(`user-${user.id}`)
+    setErrorMessage('')
+    setAdminMessage('')
+    try {
+      const response = await fetch('/api/admin/users', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          action,
+          replacementUserId: action === 'suspend' ? replacementByUser[user.id] || undefined : undefined,
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || 'Operazione non riuscita')
+      await reloadPeopleAndProjects()
+      setAdminMessage(action === 'suspend' ? 'Utente sospeso e responsabilità trasferite.' : 'Utente riattivato.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Operazione non riuscita')
+    } finally {
+      setWorkingItem(null)
+    }
+  }
+
+  const transferProject = async (project: AdminProjectInfo) => {
+    const ownerId = ownerByProject[project.id]
+    if (!ownerId || ownerId === project.owner_id) return
+    if (!window.confirm(`Trasferire la proprietà del progetto “${project.name}”?`)) return
+
+    setWorkingItem(`project-${project.id}`)
+    setErrorMessage('')
+    setAdminMessage('')
+    try {
+      const response = await fetch('/api/admin/projects', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ projectId: project.id, ownerId }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.error || 'Trasferimento non riuscito')
+      await reloadPeopleAndProjects()
+      setAdminMessage('Proprietà del progetto trasferita.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Trasferimento non riuscito')
+    } finally {
+      setWorkingItem(null)
+    }
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    router.push('/auth/login')
+  }
+
   const saveNotificationDefaults = async () => {
     if (!notificationSettings) return
 
@@ -156,17 +272,27 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <h1 className="text-2xl font-bold">Admin Console</h1>
-        </div>
-      </header>
+      <AppHeader
+        email={currentUserEmail}
+        fullName={users.find((user) => user.id === currentUserId)?.full_name}
+        isAdmin
+        current="admin"
+        onLogout={handleLogout}
+      />
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        <div className="mb-8">
+          <p className="text-sm font-semibold uppercase tracking-wide text-red-600">Amministrazione</p>
+          <h1 className="mt-1 text-3xl font-bold text-gray-900">Persone e continuità</h1>
+          <p className="mt-2 text-gray-600">Sospendi gli accessi senza perdere il lavoro e trasferisci le responsabilità in sicurezza.</p>
+        </div>
         {errorMessage && (
           <div className="mb-6 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {errorMessage}
           </div>
+        )}
+        {adminMessage && (
+          <div className="mb-6 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">{adminMessage}</div>
         )}
 
         {notificationSettings && (
@@ -307,7 +433,6 @@ export default function AdminPage() {
               onChange={(e) => setNewUserEmail(e.target.value)}
               placeholder="Email"
               className="flex-1 px-3 py-2 border border-gray-300 rounded-md"
-              minLength={10}
               required
             />
             <input
@@ -316,6 +441,7 @@ export default function AdminPage() {
               onChange={(e) => setNewUserPassword(e.target.value)}
               placeholder="Password"
               className="flex-1 px-3 py-2 border border-gray-300 rounded-md"
+              minLength={10}
               required
             />
             <button
@@ -328,36 +454,90 @@ export default function AdminPage() {
         </div>
 
         {/* Users list */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-100 border-b">
-              <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Email</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Nome</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Ruolo</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Telefono</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Telegram</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="border-b hover:bg-gray-50">
-                  <td className="px-6 py-3 text-sm">{user.email}</td>
-                  <td className="px-6 py-3 text-sm">{user.full_name || '-'}</td>
-                  <td className="px-6 py-3 text-sm">
-                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                      user.role === 'admin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
-                    }`}>
-                      {user.role}
-                    </span>
-                  </td>
-                  <td className="px-6 py-3 text-sm">{user.phone || '-'}</td>
-                  <td className="px-6 py-3 text-sm">{user.telegram_chat_id ? '✓' : '-'}</td>
+        <section className="mb-8 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-6">
+            <h2 className="text-xl font-bold text-gray-900">Utenti</h2>
+            <p className="mt-1 text-sm text-gray-500">Per sospendere chi possiede progetti, scegli prima la persona che erediterà il lavoro.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px]">
+              <thead className="border-b bg-gray-100">
+                <tr>
+                  <th className="px-5 py-3 text-left text-sm font-semibold">Persona</th>
+                  <th className="px-5 py-3 text-left text-sm font-semibold">Ruolo</th>
+                  <th className="px-5 py-3 text-left text-sm font-semibold">Stato</th>
+                  <th className="px-5 py-3 text-left text-sm font-semibold">Ultimo accesso</th>
+                  <th className="px-5 py-3 text-left text-sm font-semibold">Trasferisci a</th>
+                  <th className="px-5 py-3 text-right text-sm font-semibold">Azione</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {users.map((user) => (
+                  <tr key={user.id} className="border-b hover:bg-gray-50">
+                    <td className="px-5 py-3 text-sm">
+                      <p className="font-medium text-gray-900">{user.full_name || user.email}</p>
+                      <p className="text-xs text-gray-500">{user.email}</p>
+                    </td>
+                    <td className="px-5 py-3 text-sm">
+                      <span className={`rounded px-2 py-1 text-xs font-semibold ${user.role === 'admin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>{user.role}</span>
+                    </td>
+                    <td className="px-5 py-3 text-sm">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${user.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>{user.is_active ? 'Attivo' : 'Sospeso'}</span>
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-600">
+                      {user.last_sign_in_at ? new Intl.DateTimeFormat('it-IT', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(user.last_sign_in_at)) : 'Mai'}
+                    </td>
+                    <td className="px-5 py-3 text-sm">
+                      {user.is_active && user.id !== currentUserId ? (
+                        <select value={replacementByUser[user.id] || ''} onChange={(event) => setReplacementByUser((current) => ({ ...current, [user.id]: event.target.value }))} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+                          <option value="">Scegli se necessario</option>
+                          {users.filter((candidate) => candidate.is_active && candidate.id !== user.id).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.full_name || candidate.email}</option>)}
+                        </select>
+                      ) : <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-5 py-3 text-right text-sm">
+                      {user.id === currentUserId ? (
+                        <span className="text-xs text-gray-400">Account corrente</span>
+                      ) : (
+                        <button type="button" onClick={() => changeUserStatus(user)} disabled={workingItem !== null} className={`rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50 ${user.is_active ? 'border border-red-200 text-red-700 hover:bg-red-50' : 'bg-green-600 text-white hover:bg-green-700'}`}>
+                          {workingItem === `user-${user.id}` ? 'Attendi...' : user.is_active ? 'Sospendi' : 'Riattiva'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 p-6">
+            <h2 className="text-xl font-bold text-gray-900">Progetti aziendali</h2>
+            <p className="mt-1 text-sm text-gray-500">Solo gli amministratori possono cambiare l’owner.</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {projects.map((project) => (
+              <div key={project.id} className="grid gap-4 p-5 md:grid-cols-[1.2fr_0.8fr_1fr_auto] md:items-center">
+                <div>
+                  <p className="font-semibold text-gray-900">{project.name}</p>
+                  <p className="text-xs text-gray-500">{project.start_date} → {project.end_date}</p>
+                </div>
+                <div className="text-sm text-gray-600">
+                  <p>{project.task_count} task totali</p>
+                  <p className={project.open_task_count > 0 ? 'text-amber-700' : 'text-green-700'}>{project.open_task_count} ancora aperti</p>
+                </div>
+                <select value={ownerByProject[project.id] || project.owner_id} onChange={(event) => setOwnerByProject((current) => ({ ...current, [project.id]: event.target.value }))} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                  {users.filter((user) => user.is_active).map((user) => <option key={user.id} value={user.id}>{user.full_name || user.email}</option>)}
+                </select>
+                <button type="button" onClick={() => transferProject(project)} disabled={workingItem !== null || (ownerByProject[project.id] || project.owner_id) === project.owner_id} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:cursor-default disabled:bg-gray-200 disabled:text-gray-500">
+                  {workingItem === `project-${project.id}` ? 'Trasferimento...' : 'Trasferisci'}
+                </button>
+              </div>
+            ))}
+            {projects.length === 0 && <p className="p-8 text-center text-sm text-gray-500">Nessun progetto disponibile.</p>}
+          </div>
+        </section>
       </main>
     </div>
   )

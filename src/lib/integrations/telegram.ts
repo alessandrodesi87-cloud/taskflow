@@ -444,6 +444,7 @@ async function loadTelegramUser(admin: SupabaseClient, chatId: string) {
     .from('users')
     .select('id, full_name, telegram_chat_id')
     .eq('telegram_chat_id', chatId)
+    .eq('is_active', true)
     .maybeSingle()
   if (error) throw new Error(error.message)
   return data as TelegramUserRow | null
@@ -571,6 +572,7 @@ export async function dispatchTelegramReminders(admin: SupabaseClient, now = new
   const [{ data: users, error: usersError }, { data: preferences, error: preferencesError }] = await Promise.all([
     admin.from('users')
       .select('id, full_name, telegram_chat_id')
+      .eq('is_active', true)
       .not('telegram_chat_id', 'is', null),
     admin.from('user_notification_preferences')
       .select('user_id, telegram_enabled_override, telegram_time_override, include_overdue_override, telegram_default_project_id, notification_project_ids'),

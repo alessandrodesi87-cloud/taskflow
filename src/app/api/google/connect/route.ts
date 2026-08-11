@@ -4,14 +4,21 @@ import { createGoogleAuthorization, GOOGLE_OAUTH_COOKIE } from '@/lib/googleTask
 
 export const dynamic = 'force-dynamic'
 
-function getAppOrigin(request: NextRequest) {
-  const configuredUrl = process.env.NEXT_PUBLIC_APP_URL
-
-  if (process.env.VERCEL_ENV === 'production' && configuredUrl) {
-    return new URL(configuredUrl).origin
+function getGoogleRedirectUri(request: NextRequest) {
+  const explicitRedirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim()
+  if (explicitRedirectUri) {
+    return new URL(explicitRedirectUri).toString()
   }
 
-  return request.nextUrl.origin
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()
+  const productionHostname = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
+  const appOrigin = configuredAppUrl
+    ? new URL(configuredAppUrl).origin
+    : productionHostname
+      ? `https://${productionHostname}`
+      : request.nextUrl.origin
+
+  return new URL('/api/google/callback', appOrigin).toString()
 }
 
 export async function POST(request: NextRequest) {
@@ -21,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const redirectUri = `${getAppOrigin(request)}/api/google/callback`
+    const redirectUri = getGoogleRedirectUri(request)
     const authorization = createGoogleAuthorization(authenticated.user.id, redirectUri)
     const response = NextResponse.json({ url: authorization.authorizationUrl })
     response.cookies.set(GOOGLE_OAUTH_COOKIE, authorization.nonce, {

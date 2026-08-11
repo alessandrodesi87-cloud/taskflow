@@ -1,16 +1,19 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import type { Project } from '@/types'
+import AppHeader from '@/components/AppHeader'
 
 interface GoogleAccountView {
   id: string
   email: string
   default_project_id: string | null
   connected_at: string
+  last_sync_at: string | null
+  last_sync_status: 'success' | 'error' | null
+  last_sync_error: string | null
 }
 
 interface SyncResult {
@@ -72,6 +75,26 @@ interface NotificationPreferencesView {
   }>
 }
 
+interface ProfileView {
+  id: string
+  email?: string | null
+  full_name?: string | null
+  phone?: string | null
+  role: 'admin' | 'member'
+  is_active: boolean
+  created_at: string
+}
+
+type SettingsSection = 'profile' | 'notifications' | 'integrations'
+
+function formatDateTime(value: string | null) {
+  if (!value) return 'Mai sincronizzato'
+  return new Intl.DateTimeFormat('it-IT', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value))
+}
+
 async function authenticatedFetch(path: string, init?: RequestInit) {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) throw new Error('Sessione scaduta. Accedi di nuovo.')
@@ -93,6 +116,10 @@ export default function SettingsPage() {
   const [accounts, setAccounts] = useState<GoogleAccountView[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [notifications, setNotifications] = useState<NotificationPreferencesView | null>(null)
+  const [profile, setProfile] = useState<ProfileView | null>(null)
+  const [section, setSection] = useState<SettingsSection>('notifications')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
@@ -106,27 +133,36 @@ export default function SettingsPage() {
       return
     }
 
-    const [projectsResult, accountsResult, notificationsResult] = await Promise.all([
+    const [projectsResult, accountsResult, notificationsResult, profileResult] = await Promise.all([
       supabase
         .from('projects')
         .select('id, name, description, owner_id, start_date, end_date, color, created_at')
         .order('start_date', { ascending: true }),
       authenticatedFetch('/api/google/accounts'),
       authenticatedFetch('/api/notifications/preferences'),
+      authenticatedFetch('/api/profile'),
     ])
 
     if (projectsResult.error) throw new Error('Impossibile leggere i progetti')
     setProjects((projectsResult.data || []) as Project[])
     setAccounts(accountsResult as GoogleAccountView[])
     setNotifications(notificationsResult as NotificationPreferencesView)
+    setProfile((profileResult as { profile: ProfileView }).profile)
   }, [router])
 
   useEffect(() => {
-    const googleResult = new URLSearchParams(window.location.search).get('google')
+    const params = new URLSearchParams(window.location.search)
+    const requestedSection = params.get('section')
+    if (requestedSection === 'profile' || requestedSection === 'notifications' || requestedSection === 'integrations') {
+      setSection(requestedSection)
+    }
+    const googleResult = params.get('google')
     if (googleResult === 'connected') {
+      setSection('integrations')
       setMessage({ type: 'success', text: 'Account Google collegato correttamente.' })
       window.history.replaceState({}, '', '/settings')
     } else if (googleResult === 'error') {
+      setSection('integrations')
       setMessage({
         type: 'error',
         text: 'Il collegamento Google non è riuscito. Puoi riprovare tra poco.',
@@ -141,6 +177,11 @@ export default function SettingsPage() {
       }))
       .finally(() => setLoading(false))
   }, [loadData])
+
+  const changeSection = (nextSection: SettingsSection) => {
+    setSection(nextSection)
+    window.history.replaceState({}, '', `/settings?section=${nextSection}`)
+  }
 
   const connectGoogle = async () => {
     setWorking('connect')
@@ -197,6 +238,7 @@ export default function SettingsPage() {
     setMessage(null)
     try {
       const result = await authenticatedFetch('/api/google/sync', { method: 'POST' }) as SyncResult
+      await loadData()
       if (result.failures.length > 0) {
         setMessage({
           type: 'error',
@@ -214,6 +256,36 @@ export default function SettingsPage() {
       }
     } catch (error) {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Sincronizzazione non riuscita' })
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  const syncAccount = async (account: GoogleAccountView) => {
+    setWorking(`sync-${account.id}`)
+    setMessage(null)
+    try {
+      const result = await authenticatedFetch('/api/google/sync', {
+        method: 'POST',
+        body: JSON.stringify({ accountId: account.id }),
+      }) as SyncResult
+
+      await loadData()
+      if (result.failures.length > 0) {
+        setMessage({ type: 'error', text: result.failures[0].message })
+      } else {
+        setMessage({
+          type: 'success',
+          text: result.imported > 0
+            ? `${result.imported} task importati da ${account.email}.`
+            : `${account.email} è aggiornato.`,
+        })
+      }
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Sincronizzazione non riuscita',
+      })
     } finally {
       setWorking(null)
     }
@@ -371,6 +443,58 @@ export default function SettingsPage() {
     }
   }
 
+  const saveProfile = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!profile) return
+    setWorking('profile-save')
+    setMessage(null)
+    try {
+      const result = await authenticatedFetch('/api/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          full_name: profile.full_name || '',
+          phone: profile.phone || '',
+        }),
+      }) as { profile: ProfileView }
+      setProfile(result.profile)
+      setMessage({ type: 'success', text: 'Profilo aggiornato.' })
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Salvataggio non riuscito' })
+    } finally {
+      setWorking(null)
+    }
+  }
+
+  const changePassword = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setMessage(null)
+    if (newPassword.length < 10 || newPassword !== confirmPassword) {
+      setMessage({
+        type: 'error',
+        text: newPassword !== confirmPassword
+          ? 'Le due password non coincidono.'
+          : 'La nuova password deve contenere almeno 10 caratteri.',
+      })
+      return
+    }
+
+    setWorking('password-save')
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) {
+      setMessage({ type: 'error', text: error.message })
+    } else {
+      setNewPassword('')
+      setConfirmPassword('')
+      setMessage({ type: 'success', text: 'Password aggiornata.' })
+    }
+    setWorking(null)
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    router.push('/auth/login')
+  }
+
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center">Caricamento...</div>
   }
@@ -379,22 +503,43 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <Link href="/dashboard" className="text-2xl font-bold text-blue-600">TaskFlow</Link>
-          <Link href="/dashboard" className="text-sm font-medium text-gray-600 hover:text-blue-600">
-            ← Torna ai progetti
-          </Link>
-        </div>
-      </header>
+      <AppHeader
+        email={profile?.email}
+        fullName={profile?.full_name}
+        isAdmin={profile?.role === 'admin'}
+        current="settings"
+        onLogout={handleLogout}
+      />
 
       <main className="mx-auto max-w-5xl px-4 py-8">
         <div className="mb-8">
-          <p className="mb-2 text-sm font-semibold uppercase tracking-wide text-blue-600">Fase 2</p>
-          <h1 className="text-3xl font-bold text-gray-900">Integrazioni</h1>
+          <p className="mb-2 text-sm font-semibold uppercase tracking-wide text-blue-600">Il tuo spazio</p>
+          <h1 className="text-3xl font-bold text-gray-900">Impostazioni</h1>
           <p className="mt-2 max-w-2xl text-gray-600">
-            Collega Google Tasks e scegli in quale progetto TaskFlow importare le attività.
+            Gestisci profilo, promemoria e collegamenti personali.
           </p>
+        </div>
+
+        <div className="mb-6 flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
+          {([
+            ['profile', 'Profilo'],
+            ['notifications', 'Notifiche'],
+            ['integrations', 'Integrazioni'],
+          ] as Array<[SettingsSection, string]>).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => changeSection(value)}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold ${section === value ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+            >
+              {label}
+            </button>
+          ))}
+          {profile?.role === 'admin' && (
+            <button type="button" onClick={() => router.push('/admin')} className="ml-auto rounded-lg px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">
+              Pannello admin
+            </button>
+          )}
         </div>
 
         {message && (
@@ -407,7 +552,52 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {notifications && (
+        {section === 'profile' && profile && (
+          <div className="grid gap-6 lg:grid-cols-2">
+            <form onSubmit={saveProfile} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-gray-900">Informazioni personali</h2>
+              <p className="mt-1 text-sm text-gray-500">Il telefono è un contatto facoltativo e non serve per collegare Telegram.</p>
+              <div className="mt-5 space-y-4">
+                <label className="block">
+                  <span className="text-sm font-semibold text-gray-700">Nome completo</span>
+                  <input value={profile.full_name || ''} onChange={(event) => setProfile({ ...profile, full_name: event.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-gray-700">Email</span>
+                  <input value={profile.email || ''} className="mt-1 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-gray-500" disabled />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-gray-700">Telefono di contatto</span>
+                  <input type="tel" value={profile.phone || ''} onChange={(event) => setProfile({ ...profile, phone: event.target.value })} placeholder="+39 333 1234567" className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" />
+                  <span className="mt-1 block text-xs text-gray-500">Inserisci il prefisso internazionale, ad esempio +39.</span>
+                </label>
+              </div>
+              <button type="submit" disabled={working !== null} className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                {working === 'profile-save' ? 'Salvataggio...' : 'Salva profilo'}
+              </button>
+            </form>
+
+            <form onSubmit={changePassword} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-semibold text-gray-900">Cambia password</h2>
+              <p className="mt-1 text-sm text-gray-500">Usa almeno 10 caratteri e combina lettere, numeri e simboli.</p>
+              <div className="mt-5 space-y-4">
+                <label className="block">
+                  <span className="text-sm font-semibold text-gray-700">Nuova password</span>
+                  <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" autoComplete="new-password" required />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-semibold text-gray-700">Ripeti password</span>
+                  <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" autoComplete="new-password" required />
+                </label>
+              </div>
+              <button type="submit" disabled={working !== null} className="mt-5 w-full rounded-lg bg-gray-900 px-4 py-2.5 font-semibold text-white hover:bg-black disabled:opacity-50">
+                {working === 'password-save' ? 'Aggiornamento...' : 'Aggiorna password'}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {section === 'notifications' && notifications && (
           <section className="mb-8 overflow-hidden rounded-xl border border-blue-100 bg-white shadow-sm">
             <div className="border-b border-blue-100 bg-blue-50 p-6">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -718,6 +908,7 @@ export default function SettingsPage() {
           </section>
         )}
 
+        {section === 'integrations' && (
         <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="flex flex-col gap-4 border-b border-gray-200 p-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -742,10 +933,25 @@ export default function SettingsPage() {
                 Nessun account Google collegato.
               </div>
             ) : accounts.map((account) => (
-              <div key={account.id} className="grid gap-4 p-6 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <div key={account.id} className="grid gap-4 p-6 lg:grid-cols-[1.1fr_1fr_1fr_auto] lg:items-end">
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Account</p>
                   <p className="mt-1 font-medium text-gray-900">{account.email}</p>
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${
+                      account.last_sync_status === 'error'
+                        ? 'bg-red-100 text-red-700'
+                        : account.last_sync_status === 'success'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {account.last_sync_status === 'error'
+                        ? 'Da ricollegare'
+                        : account.last_sync_status === 'success'
+                          ? 'Collegato'
+                          : 'Collegato, non ancora sincronizzato'}
+                    </span>
+                  </div>
                 </div>
                 <label className="block">
                   <span className="text-xs font-medium uppercase tracking-wide text-gray-400">
@@ -763,14 +969,45 @@ export default function SettingsPage() {
                     ))}
                   </select>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => disconnectGoogle(account)}
-                  disabled={working !== null}
-                  className="rounded-md px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                >
-                  Scollega
-                </button>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
+                    Ultima sincronizzazione
+                  </p>
+                  <p className="mt-1 text-sm text-gray-700">{formatDateTime(account.last_sync_at)}</p>
+                  {account.last_sync_error && (
+                    <p className="mt-1 max-w-xs text-xs text-red-600" title={account.last_sync_error}>
+                      {account.last_sync_error}
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => syncAccount(account)}
+                    disabled={working !== null || !account.default_project_id}
+                    className="rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                  >
+                    {working === `sync-${account.id}` ? 'Sincronizzo...' : 'Sincronizza'}
+                  </button>
+                  {account.last_sync_status === 'error' && (
+                    <button
+                      type="button"
+                      onClick={connectGoogle}
+                      disabled={working !== null}
+                      className="rounded-md border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                    >
+                      Ricollega
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => disconnectGoogle(account)}
+                    disabled={working !== null}
+                    className="rounded-md px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Scollega
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -790,8 +1027,9 @@ export default function SettingsPage() {
             </button>
           </div>
         </section>
+        )}
 
-        {projects.length === 0 && (
+        {section === 'integrations' && projects.length === 0 && (
           <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             Prima di sincronizzare crea almeno un progetto dalla dashboard.
           </div>
