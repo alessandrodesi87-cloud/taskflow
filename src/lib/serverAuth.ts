@@ -29,6 +29,16 @@ export async function requireUser(request: NextRequest) {
 
   const admin = getSupabaseAdmin()
 
+  const { data: profile, error: profileError } = await admin
+    .from('users')
+    .select('is_active')
+    .eq('id', data.user.id)
+    .maybeSingle()
+
+  if (profileError || !profile?.is_active) {
+    return null
+  }
+
   return { user: data.user, admin }
 }
 
@@ -42,11 +52,11 @@ export async function requireAdmin(request: NextRequest) {
   const { user, admin } = authenticated
   const { data: profile, error: profileError } = await admin
     .from('users')
-    .select('role')
+    .select('role, is_active')
     .eq('id', user.id)
     .single()
 
-  if (profileError || profile?.role !== 'admin') {
+  if (profileError || !profile?.is_active || profile.role !== 'admin') {
     return null
   }
 

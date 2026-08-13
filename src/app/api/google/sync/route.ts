@@ -13,7 +13,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await syncGoogleTasks(authenticated.admin, authenticated.user.id)
+    const body = await request.json().catch(() => null) as { accountId?: string } | null
+    const accountId = typeof body?.accountId === 'string' ? body.accountId : undefined
+    const result = await syncGoogleTasks(authenticated.admin, authenticated.user.id, accountId)
     return NextResponse.json(result)
   } catch (error) {
     console.error('Manual Google Tasks sync failed:', error)

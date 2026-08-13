@@ -9,16 +9,27 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { data, error } = await context.admin
+  const [{ data, error }, authUsersResult] = await Promise.all([
+    context.admin
     .from('users')
-    .select('id, email, full_name, role, phone, telegram_chat_id')
-    .order('created_at', { ascending: true })
+      .select('id, email, full_name, role, phone, telegram_chat_id, is_active, suspended_at')
+      .order('created_at', { ascending: true }),
+    context.admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+  ])
 
-  if (error) {
+  if (error || authUsersResult.error) {
     return NextResponse.json({ error: 'Unable to load users' }, { status: 500 })
   }
 
-  return NextResponse.json({ users: data })
+  const lastSignInByUser = new Map(
+    authUsersResult.data.users.map((user) => [user.id, user.last_sign_in_at || null])
+  )
+  return NextResponse.json({
+    users: (data || []).map((user) => ({
+      ...user,
+      last_sign_in_at: lastSignInByUser.get(user.id) || null,
+    })),
+  })
 }
 
 export async function POST(request: NextRequest) {
@@ -49,4 +60,132 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ userId: data.user.id }, { status: 201 })
+}
+
+export async function PATCH(request: NextRequest) {
+  const context = await requireAdmin(request)
+  if (!context) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const body = await request.json().catch(() => null) as {
+    userId?: string
+    action?: 'suspend' | 'reactivate'
+    replacementUserId?: string
+  } | null
+  const userId = body?.userId
+  const action = body?.action
+
+  if (!userId || (action !== 'suspend' && action !== 'reactivate')) {
+    return NextResponse.json({ error: 'Richiesta non valida' }, { status: 400 })
+  }
+  if (userId === context.user.id && action === 'suspend') {
+    return NextResponse.json({ error: 'Non puoi sospendere il tuo account amministratore.' }, { status: 400 })
+  }
+
+  const { data: target, error: targetError } = await context.admin
+    .from('users')
+    .select('id, email, is_active')
+    .eq('id', userId)
+    .maybeSingle()
+  if (targetError || !target) {
+    return NextResponse.json({ error: 'Utente non trovato' }, { status: 404 })
+  }
+
+  if (action === 'reactivate') {
+    const { error: authError } = await context.admin.auth.admin.updateUserById(userId, {
+      ban_duration: 'none',
+    })
+    if (authError) return NextResponse.json({ error: authError.message }, { status: 400 })
+
+    const { error: profileError } = await context.admin
+      .from('users')
+      .update({ is_active: true, suspended_at: null, updated_at: new Date().toISOString() })
+      .eq('id', userId)
+    if (profileError) {
+      return NextResponse.json({ error: 'Riattivazione del profilo non riuscita' }, { status: 500 })
+    }
+
+    await context.admin.from('audit_logs').insert({
+      user_id: context.user.id,
+      action: 'user_reactivated',
+      entity_type: 'user',
+      entity_id: userId,
+      changes: { email: target.email },
+    })
+    return NextResponse.json({ success: true })
+  }
+
+  const { data: ownedProjects, error: projectsError } = await context.admin
+    .from('projects')
+    .select('id')
+    .eq('owner_id', userId)
+  if (projectsError) {
+    return NextResponse.json({ error: 'Impossibile controllare i progetti dell’utente' }, { status: 500 })
+  }
+
+  const replacementUserId = body?.replacementUserId || ''
+  if ((ownedProjects?.length || 0) > 0 && !replacementUserId) {
+    return NextResponse.json({
+      error: 'Scegli chi erediterà progetti e task prima di sospendere l’utente.',
+      requires_replacement: true,
+      owned_projects: ownedProjects?.length || 0,
+    }, { status: 409 })
+  }
+
+  if (replacementUserId) {
+    const { data: replacement, error: replacementError } = await context.admin
+      .from('users')
+      .select('id, is_active')
+      .eq('id', replacementUserId)
+      .maybeSingle()
+    if (replacementError || !replacement?.is_active || replacement.id === userId) {
+      return NextResponse.json({ error: 'Il sostituto selezionato non è valido.' }, { status: 400 })
+    }
+  }
+
+  const { error: banError } = await context.admin.auth.admin.updateUserById(userId, {
+    ban_duration: '876000h',
+  })
+  if (banError) return NextResponse.json({ error: banError.message }, { status: 400 })
+
+  try {
+    if (replacementUserId) {
+      const updates = await Promise.all([
+        context.admin.from('projects').update({ owner_id: replacementUserId, updated_at: new Date().toISOString() }).eq('owner_id', userId),
+        context.admin.from('tasks').update({ owner_id: replacementUserId, updated_at: new Date().toISOString() }).eq('owner_id', userId),
+        context.admin.from('tasks').update({ assignee_id: replacementUserId, updated_at: new Date().toISOString() }).eq('assignee_id', userId),
+      ])
+      const failedUpdate = updates.find((result) => result.error)
+      if (failedUpdate?.error) throw failedUpdate.error
+    }
+
+    const { error: profileError } = await context.admin
+      .from('users')
+      .update({ is_active: false, suspended_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', userId)
+    if (profileError) throw profileError
+
+    await context.admin.from('audit_logs').insert({
+      user_id: context.user.id,
+      action: 'user_suspended',
+      entity_type: 'user',
+      entity_id: userId,
+      changes: {
+        email: target.email,
+        replacement_user_id: replacementUserId || null,
+        transferred_projects: ownedProjects?.length || 0,
+      },
+    })
+  } catch (error) {
+    await context.admin.auth.admin.updateUserById(userId, { ban_duration: 'none' })
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : 'Sospensione non riuscita',
+    }, { status: 500 })
+  }
+
+  return NextResponse.json({
+    success: true,
+    transferred_projects: ownedProjects?.length || 0,
+  })
 }

@@ -314,7 +314,7 @@ async function deliverReminder(
 export async function scheduleDailyReminders(admin: SupabaseClient, now = new Date()) {
   const defaults = await loadNotificationDefaults(admin)
   const [{ data: users, error: usersError }, { data: preferences, error: preferencesError }] = await Promise.all([
-    admin.from('users').select('id, email, full_name').not('email', 'is', null),
+    admin.from('users').select('id, email, full_name').eq('is_active', true).not('email', 'is', null),
     admin.from('user_notification_preferences').select(
       'user_id, email_enabled_override, email_time_override, include_overdue_override, notification_project_ids'
     ),

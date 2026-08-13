@@ -7,6 +7,8 @@ export interface User {
   telegram_chat_id?: string
   phone?: string
   role: 'admin' | 'member'
+  is_active?: boolean
+  suspended_at?: string | null
   created_at: string
 }
 
@@ -40,7 +42,7 @@ export interface Task {
   start_date: string
   due_date: string
   status: 'todo' | 'in_progress' | 'done'
-  priority: 'low' | 'medium' | 'high'
+  priority: 'low' | 'medium' | 'high' | 'urgent'
   tags?: string[]
   google_task_id?: string
   email_origin?: string

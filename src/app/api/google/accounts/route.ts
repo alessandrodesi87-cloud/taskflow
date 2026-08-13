@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await authenticated.admin
     .from('gmail_accounts')
-    .select('id, email, default_project_id, connected_at')
+    .select('id, email, default_project_id, connected_at, last_sync_at, last_sync_status, last_sync_error')
     .eq('user_id', authenticated.user.id)
     .order('connected_at', { ascending: true })
 
@@ -52,7 +52,7 @@ export async function PATCH(request: NextRequest) {
     .update({ default_project_id: projectId })
     .eq('id', accountId)
     .eq('user_id', authenticated.user.id)
-    .select('id, email, default_project_id, connected_at')
+    .select('id, email, default_project_id, connected_at, last_sync_at, last_sync_status, last_sync_error')
     .maybeSingle()
 
   if (error) {

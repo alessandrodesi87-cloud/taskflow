@@ -32,6 +32,11 @@ type ZoomMode = 'day' | 'week' | 'month'
 interface GanttChartProps {
   projects: Project[]
   tasks: Task[]
+  collapsedProjectIds?: string[]
+  onProjectClick?: (project: Project) => void
+  onProjectToggle?: (projectId: string) => void
+  onCollapseAll?: () => void
+  onExpandAll?: () => void
   onTaskClick?: (task: Task) => void
   onTaskDateChange?: (task: Task, startDate: string, dueDate: string) => void | Promise<void>
   savingTaskId?: string | null
@@ -147,6 +152,11 @@ function TimelineLane({
 export default function GanttChart({
   projects,
   tasks,
+  collapsedProjectIds = [],
+  onProjectClick,
+  onProjectToggle,
+  onCollapseAll,
+  onExpandAll,
   onTaskClick,
   onTaskDateChange,
   savingTaskId,
@@ -157,6 +167,10 @@ export default function GanttChart({
   const dragStateRef = useRef<TaskDragState | null>(null)
   const suppressTaskClickRef = useRef<string | null>(null)
   const today = useMemo(() => startOfDay(new Date()), [])
+  const collapsedProjects = useMemo(
+    () => new Set(collapsedProjectIds),
+    [collapsedProjectIds]
+  )
 
   const dateRange = useMemo(() => {
     const dates = [
@@ -537,6 +551,25 @@ export default function GanttChart({
           >
             Oggi
           </button>
+
+          {onCollapseAll && onExpandAll ? (
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+              <button
+                type="button"
+                onClick={onCollapseAll}
+                className="rounded-md px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Chiudi tutti
+              </button>
+              <button
+                type="button"
+                onClick={onExpandAll}
+                className="rounded-md px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Apri tutti
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex w-full flex-wrap items-center gap-4 text-xs text-slate-500">
@@ -605,6 +638,7 @@ export default function GanttChart({
           {projects.map((project) => {
             const projectTasks = tasks.filter((task) => task.project_id === project.id)
             const projectBar = getBarPosition(project.start_date, project.end_date)
+            const isCollapsed = collapsedProjects.has(project.id)
 
             return (
               <div key={project.id}>
@@ -613,9 +647,25 @@ export default function GanttChart({
                     className="sticky left-0 z-10 flex-none border-r border-slate-200 bg-slate-50 px-4 py-3"
                     style={{ width: LEFT_COLUMN_WIDTH }}
                   >
-                    <h4 className="truncate text-sm font-semibold text-slate-900" title={project.name}>
-                      {project.name}
-                    </h4>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onProjectToggle?.(project.id)}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-200 hover:text-slate-900"
+                        aria-label={isCollapsed ? `Apri ${project.name}` : `Chiudi ${project.name}`}
+                        aria-expanded={!isCollapsed}
+                      >
+                        {isCollapsed ? '›' : '⌄'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onProjectClick?.(project)}
+                        className="min-w-0 truncate text-left text-sm font-semibold text-slate-900 hover:text-blue-700"
+                        title={`${project.name} · Apri dettagli`}
+                      >
+                        {project.name}
+                      </button>
+                    </div>
                     <p className="mt-0.5 text-xs text-slate-500">
                       {formatRange(project.start_date, project.end_date)}
                     </p>
@@ -645,7 +695,7 @@ export default function GanttChart({
                   </TimelineLane>
                 </div>
 
-                {projectTasks.map((task) => {
+                {!isCollapsed && projectTasks.map((task) => {
                   const activeDrag = dragState?.taskId === task.id ? dragState : null
                   const displayedStartDate =
                     activeDrag && activeDrag.mode !== 'resize-end'
@@ -682,9 +732,14 @@ export default function GanttChart({
                         className="sticky left-0 z-10 flex-none border-r border-slate-200 bg-white py-3 pl-8 pr-4"
                         style={{ width: LEFT_COLUMN_WIDTH }}
                       >
-                        <p className="truncate text-sm font-medium text-slate-800" title={task.title}>
+                        <button
+                          type="button"
+                          onClick={() => openTask(task)}
+                          className="block w-full truncate text-left text-sm font-medium text-slate-800 hover:text-blue-700"
+                          title={`${task.title} · Apri dettagli`}
+                        >
                           {task.title}
-                        </p>
+                        </button>
                         <p className="mt-0.5 text-xs text-slate-500">
                           {formatRange(displayedStartDate, displayedDueDate)}
                         </p>

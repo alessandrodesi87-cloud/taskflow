@@ -15,6 +15,7 @@ interface OAuthStatePayload {
   userId: string
   nonce: string
   redirectUri: string
+  returnOrigin?: string
   expiresAt: number
 }
 
@@ -82,17 +83,8 @@ function signState(encodedPayload: string, secret: string) {
   return createHmac('sha256', secret).update(encodedPayload).digest('base64url')
 }
 
-export function createGoogleAuthorization(userId: string, redirectUri: string) {
-  const { clientId, clientSecret } = getGoogleCredentials()
-  const nonce = randomBytes(32).toString('base64url')
-  const payload: OAuthStatePayload = {
-    userId,
-    nonce,
-    redirectUri,
-    expiresAt: Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS,
-  }
-  const encodedPayload = toBase64Url(JSON.stringify(payload))
-  const state = `${encodedPayload}.${signState(encodedPayload, clientSecret)}`
+function buildGoogleAuthorizationUrl(state: string, redirectUri: string) {
+  const { clientId } = getGoogleCredentials()
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -108,18 +100,35 @@ export function createGoogleAuthorization(userId: string, redirectUri: string) {
     state,
   })
 
+  return `${GOOGLE_AUTH_URL}?${params.toString()}`
+}
+
+export function createGoogleAuthorization(userId: string, redirectUri: string, returnOrigin?: string) {
+  const { clientSecret } = getGoogleCredentials()
+  const nonce = randomBytes(32).toString('base64url')
+  const payload: OAuthStatePayload = {
+    userId,
+    nonce,
+    redirectUri,
+    returnOrigin: returnOrigin ? new URL(returnOrigin).origin : new URL(redirectUri).origin,
+    expiresAt: Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS,
+  }
+  const encodedPayload = toBase64Url(JSON.stringify(payload))
+  const state = `${encodedPayload}.${signState(encodedPayload, clientSecret)}`
+
   return {
-    authorizationUrl: `${GOOGLE_AUTH_URL}?${params.toString()}`,
+    authorizationUrl: buildGoogleAuthorizationUrl(state, redirectUri),
+    state,
     nonce,
     maxAge: OAUTH_STATE_TTL_SECONDS,
   }
 }
 
-export function verifyGoogleOAuthState(state: string, cookieNonce: string | undefined) {
+function verifySignedGoogleOAuthState(state: string) {
   const { clientSecret } = getGoogleCredentials()
   const [encodedPayload, receivedSignature, ...rest] = state.split('.')
 
-  if (!encodedPayload || !receivedSignature || rest.length > 0 || !cookieNonce) {
+  if (!encodedPayload || !receivedSignature || rest.length > 0) {
     throw new Error('Collegamento Google non valido o scaduto')
   }
 
@@ -144,9 +153,33 @@ export function verifyGoogleOAuthState(state: string, cookieNonce: string | unde
   if (
     !payload.userId ||
     !payload.redirectUri ||
-    payload.nonce !== cookieNonce ||
+    !payload.nonce ||
     payload.expiresAt < Math.floor(Date.now() / 1000)
   ) {
+    throw new Error('Collegamento Google non valido o scaduto')
+  }
+
+  return payload
+}
+
+export function resumeGoogleAuthorization(state: string) {
+  const payload = verifySignedGoogleOAuthState(state)
+  return {
+    authorizationUrl: buildGoogleAuthorizationUrl(state, payload.redirectUri),
+    nonce: payload.nonce,
+    redirectUri: payload.redirectUri,
+    returnOrigin: payload.returnOrigin || new URL(payload.redirectUri).origin,
+    maxAge: Math.max(0, payload.expiresAt - Math.floor(Date.now() / 1000)),
+  }
+}
+
+export function verifyGoogleOAuthState(state: string, cookieNonce: string | undefined) {
+  if (!cookieNonce) {
+    throw new Error('Collegamento Google non valido o scaduto')
+  }
+
+  const payload = verifySignedGoogleOAuthState(state)
+  if (payload.nonce !== cookieNonce) {
     throw new Error('Collegamento Google non valido o scaduto')
   }
 
@@ -419,11 +452,32 @@ async function syncGoogleAccount(admin: SupabaseClient, account: GoogleAccount) 
 export async function syncGoogleTasks(
   admin: SupabaseClient,
   userId?: string,
+  accountId?: string,
 ): Promise<GoogleSyncResult> {
   let query = admin
     .from('gmail_accounts')
     .select('id, user_id, email, access_token, refresh_token, default_project_id')
-  if (userId) query = query.eq('user_id', userId)
+  if (userId) {
+    query = query.eq('user_id', userId)
+  } else {
+    const { data: activeUsers, error: activeUsersError } = await admin
+      .from('users')
+      .select('id')
+      .eq('is_active', true)
+    if (activeUsersError) throw new Error('Impossibile verificare gli utenti attivi')
+    const activeUserIds = (activeUsers || []).map((activeUser) => activeUser.id)
+    if (activeUserIds.length === 0) {
+      return {
+        accounts: 0,
+        imported: 0,
+        completedInGoogle: 0,
+        skipped: 0,
+        failures: [],
+      }
+    }
+    query = query.in('user_id', activeUserIds)
+  }
+  if (accountId) query = query.eq('id', accountId)
 
   const { data, error } = await query
   if (error) throw new Error('Impossibile leggere gli account Google collegati')
@@ -443,11 +497,30 @@ export async function syncGoogleTasks(
       result.imported += accountResult.imported
       result.completedInGoogle += accountResult.completedInGoogle
       result.skipped += accountResult.skipped
+      await admin
+        .from('gmail_accounts')
+        .update({
+          last_sync_at: new Date().toISOString(),
+          last_sync_status: 'success',
+          last_sync_error: null,
+        })
+        .eq('id', account.id)
+        .eq('user_id', account.user_id)
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Errore di sincronizzazione'
       result.failures.push({
         email: account.email,
-        message: error instanceof Error ? error.message : 'Errore di sincronizzazione',
+        message,
       })
+      await admin
+        .from('gmail_accounts')
+        .update({
+          last_sync_at: new Date().toISOString(),
+          last_sync_status: 'error',
+          last_sync_error: message.slice(0, 500),
+        })
+        .eq('id', account.id)
+        .eq('user_id', account.user_id)
     }
   }
 
