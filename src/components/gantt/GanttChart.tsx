@@ -173,10 +173,8 @@ export default function GanttChart({
   )
 
   const dateRange = useMemo(() => {
-    const dates = [
-      ...projects.flatMap((project) => [project.start_date, project.end_date]),
-      ...tasks.flatMap((task) => [task.start_date, task.due_date]),
-    ]
+    const dates = tasks
+      .flatMap((task) => [task.start_date, task.due_date])
       .map(parseTaskFlowDate)
       .filter((date): date is Date => date !== null)
 
@@ -197,7 +195,7 @@ export default function GanttChart({
       maxDate,
       days: Math.max(differenceInCalendarDays(maxDate, minDate) + 1, 1),
     }
-  }, [projects, tasks, today, zoom])
+  }, [tasks, today, zoom])
 
   const selectedZoom = zoomOptions.find((option) => option.value === zoom) ?? zoomOptions[1]
   const timelineWidth = Math.max(
@@ -595,7 +593,7 @@ export default function GanttChart({
               style={{ width: LEFT_COLUMN_WIDTH }}
             >
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                Progetti e attività
+                Attività per progetto
               </p>
             </div>
 
@@ -637,17 +635,16 @@ export default function GanttChart({
 
           {projects.map((project) => {
             const projectTasks = tasks.filter((task) => task.project_id === project.id)
-            const projectBar = getBarPosition(project.start_date, project.end_date)
             const isCollapsed = collapsedProjects.has(project.id)
 
             return (
               <div key={project.id}>
-                <div className="flex border-b border-slate-200" style={fullRowStyle}>
+                <div className="flex border-b border-slate-200 bg-slate-50/80" style={fullRowStyle}>
                   <div
-                    className="sticky left-0 z-10 flex-none border-r border-slate-200 bg-slate-50 px-4 py-3"
+                    className="sticky left-0 z-10 flex h-10 flex-none items-center border-r border-slate-200 bg-slate-50 px-4"
                     style={{ width: LEFT_COLUMN_WIDTH }}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
                       <button
                         type="button"
                         onClick={() => onProjectToggle?.(project.id)}
@@ -657,6 +654,11 @@ export default function GanttChart({
                       >
                         {isCollapsed ? '›' : '⌄'}
                       </button>
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: project.color || '#2563eb' }}
+                        aria-hidden="true"
+                      />
                       <button
                         type="button"
                         onClick={() => onProjectClick?.(project)}
@@ -665,34 +667,17 @@ export default function GanttChart({
                       >
                         {project.name}
                       </button>
+                      <span className="ml-auto shrink-0 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200">
+                        {projectTasks.length}
+                      </span>
                     </div>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      {formatRange(project.start_date, project.end_date)}
-                    </p>
                   </div>
 
-                  <TimelineLane
-                    dayWidth={dayWidth}
-                    days={dateRange.days}
-                    heightClass="h-14"
-                    weekendIndexes={weekendDayIndexes}
-                    todayIndex={todayIndex}
-                  >
-                    <div
-                      className="absolute top-1/2 z-[2] flex h-7 -translate-y-1/2 items-center overflow-hidden rounded-md px-2 text-xs font-semibold text-white shadow-sm"
-                      style={{
-                        left: projectBar.left,
-                        width: projectBar.width,
-                        backgroundColor: project.color || '#2563eb',
-                      }}
-                      title={`${project.name}: ${formatRange(
-                        project.start_date,
-                        project.end_date
-                      )}`}
-                    >
-                      <span className="truncate">{project.name}</span>
-                    </div>
-                  </TimelineLane>
+                  <div
+                    className="h-10 flex-none bg-slate-50/50"
+                    style={laneWidthStyle}
+                    aria-hidden="true"
+                  />
                 </div>
 
                 {!isCollapsed && projectTasks.map((task) => {

@@ -15,9 +15,10 @@ interface DeadlineTableProps {
   projects: Project[]
   tasks: Task[]
   users: TeamUser[]
-  onProjectClick?: (project: Project) => void
   onTaskClick?: (task: Task) => void
   onTaskDueDateChange?: (task: Task, dueDate: string) => void | Promise<void>
+  onTaskProjectChange?: (task: Task, projectId: string) => void | Promise<void>
+  onTaskStatusChange?: (task: Task, status: Task['status']) => void | Promise<void>
   savingTaskId?: string | null
 }
 
@@ -30,6 +31,18 @@ const dueStateClasses: Record<DueState, string> = {
   future: 'text-slate-700 hover:bg-slate-100',
   none: 'text-slate-500 hover:bg-slate-100',
   done: 'text-emerald-700 hover:bg-emerald-50',
+}
+
+const statusLabels: Record<Task['status'], string> = {
+  todo: 'Da fare',
+  in_progress: 'In corso',
+  done: 'Completato',
+}
+
+const statusClasses: Record<Task['status'], string> = {
+  todo: 'border-slate-200 bg-slate-50 text-slate-700',
+  in_progress: 'border-blue-200 bg-blue-50 text-blue-700',
+  done: 'border-emerald-200 bg-emerald-50 text-emerald-700',
 }
 
 function parseTaskDate(value: string) {
@@ -74,9 +87,10 @@ export default function DeadlineTable({
   projects,
   tasks,
   users,
-  onProjectClick,
   onTaskClick,
   onTaskDueDateChange,
+  onTaskProjectChange,
+  onTaskStatusChange,
   savingTaskId,
 }: DeadlineTableProps) {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
@@ -129,16 +143,8 @@ export default function DeadlineTable({
     }
   }
 
-  const updateDueDate = async (task: Task, dueDate: string) => {
-    if (!dueDate || dueDate === task.due_date) {
-      setEditingTaskId(null)
-      return
-    }
-
-    setEditingTaskId(null)
-    setHighlightedTaskId(task.id)
-    await onTaskDueDateChange?.(task, dueDate)
-
+  const highlightTask = (taskId: string) => {
+    setHighlightedTaskId(taskId)
     if (highlightTimerRef.current !== null) {
       window.clearTimeout(highlightTimerRef.current)
     }
@@ -146,6 +152,17 @@ export default function DeadlineTable({
       setHighlightedTaskId(null)
       highlightTimerRef.current = null
     }, 1600)
+  }
+
+  const updateDueDate = async (task: Task, dueDate: string) => {
+    if (!dueDate || dueDate === task.due_date) {
+      setEditingTaskId(null)
+      return
+    }
+
+    setEditingTaskId(null)
+    highlightTask(task.id)
+    await onTaskDueDateChange?.(task, dueDate)
   }
 
   return (
@@ -168,12 +185,13 @@ export default function DeadlineTable({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-sm">
+          <table className="w-full min-w-[940px] border-collapse text-sm">
             <colgroup>
               <col className="w-[22%]" />
-              <col className="w-[38%]" />
-              <col className="w-[22%]" />
+              <col className="w-[30%]" />
               <col className="w-[18%]" />
+              <col className="w-[16%]" />
+              <col className="w-[14%]" />
             </colgroup>
             <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-600">
               <tr>
@@ -182,6 +200,7 @@ export default function DeadlineTable({
                 <th scope="col" aria-sort="ascending" className="border-b border-slate-200 px-4 py-3">
                   Scadenza ↑
                 </th>
+                <th scope="col" className="border-b border-slate-200 px-4 py-3">Stato</th>
                 <th scope="col" className="border-b border-slate-200 px-4 py-3">In carico a</th>
               </tr>
             </thead>
@@ -201,23 +220,30 @@ export default function DeadlineTable({
                     }`}
                   >
                     <td className="px-4 py-2.5 text-slate-600">
-                      {project ? (
-                        <button
-                          type="button"
-                          onClick={() => onProjectClick?.(project)}
-                          className="inline-flex max-w-full items-center gap-2 text-left hover:text-blue-700"
-                          title={`${project.name} · Apri dettagli`}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: project?.color || '#94a3b8' }}
+                          aria-hidden="true"
+                        />
+                        <select
+                          value={task.project_id}
+                          onChange={(event) => {
+                            highlightTask(task.id)
+                            void onTaskProjectChange?.(task, event.target.value)
+                          }}
+                          disabled={!onTaskProjectChange || isSaving}
+                          className="min-w-0 flex-1 truncate rounded-lg border border-transparent bg-transparent px-1 py-1.5 text-sm text-slate-700 hover:border-slate-200 hover:bg-white disabled:cursor-wait disabled:opacity-60"
+                          aria-label={`Cambia progetto per ${task.title}`}
                         >
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: project.color || '#2563eb' }}
-                            aria-hidden="true"
-                          />
-                          <span className="truncate">{project.name}</span>
-                        </button>
-                      ) : (
-                        <span>Progetto non disponibile</span>
-                      )}
+                          {!project && <option value={task.project_id}>Progetto non disponibile</option>}
+                          {projects.map((availableProject) => (
+                            <option key={availableProject.id} value={availableProject.id}>
+                              {availableProject.name}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
                     </td>
                     <td className="px-4 py-2.5">
                       <button
@@ -257,6 +283,22 @@ export default function DeadlineTable({
                           {isSaving ? 'Salvataggio…' : formatDueDate(task, dueState)}
                         </button>
                       )}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <select
+                        value={task.status}
+                        onChange={(event) => {
+                          highlightTask(task.id)
+                          void onTaskStatusChange?.(task, event.target.value as Task['status'])
+                        }}
+                        disabled={!onTaskStatusChange || isSaving}
+                        className={`w-full rounded-lg border px-2 py-1.5 text-xs font-semibold disabled:cursor-wait disabled:opacity-60 ${statusClasses[task.status]}`}
+                        aria-label={`Cambia stato per ${task.title}`}
+                      >
+                        {(Object.keys(statusLabels) as Task['status'][]).map((status) => (
+                          <option key={status} value={status}>{statusLabels[status]}</option>
+                        ))}
+                      </select>
                     </td>
                     <td className="px-4 py-2.5 text-slate-700">
                       <span className="flex min-w-0 items-center gap-2">

@@ -20,6 +20,7 @@ export interface Project {
   start_date: string
   end_date: string
   color?: string
+  is_personal: boolean
   created_at: string
 }
 
@@ -38,7 +39,7 @@ export interface Task {
   description?: string
   owner_id: string
   creator_id: string
-  assignee_id?: string
+  assignee_id?: string | null
   start_date: string
   due_date: string
   status: 'todo' | 'in_progress' | 'done'

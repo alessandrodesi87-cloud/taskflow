@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { Project, Task } from '@/types'
@@ -34,6 +34,12 @@ interface CurrentProfile {
 type AssigneeFilter = 'all' | 'mine' | 'unassigned'
 type DueFilter = 'all' | 'overdue' | 'upcoming'
 type PlanningView = 'gantt' | 'deadlines'
+
+interface UndoTaskStatus {
+  taskId: string
+  title: string
+  previousStatus: Task['status']
+}
 
 function localDateKey(date = new Date()) {
   const year = date.getFullYear()
@@ -69,6 +75,8 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | Task['status']>('all')
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>([])
   const [planningView, setPlanningView] = useState<PlanningView>('deadlines')
+  const [undoTaskStatus, setUndoTaskStatus] = useState<UndoTaskStatus | null>(null)
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const router = useRouter()
 
   // Form nuovo progetto
@@ -92,7 +100,10 @@ export default function DashboardPage() {
       .order('start_date', { ascending: true })
 
     if (projectsError) throw projectsError
-    const nextProjects = (projectsData || []) as Project[]
+    const nextProjects = ((projectsData || []) as Project[]).sort((first, second) => {
+      if (first.is_personal !== second.is_personal) return first.is_personal ? -1 : 1
+      return first.name.localeCompare(second.name, 'it')
+    })
     setProjects(nextProjects)
 
     const { data: usersData, error: usersError } = await supabase
@@ -184,6 +195,10 @@ export default function DashboardPage() {
     window.localStorage.setItem(`taskflow:planning-view:${user.id}`, planningView)
   }, [planningView, user])
 
+  useEffect(() => () => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
+  }, [])
+
   const getProjectParticipants = useCallback((projectId: string) => {
     const project = projects.find((item) => item.id === projectId)
     const participantIds = new Set(
@@ -220,6 +235,13 @@ export default function DashboardPage() {
       return true
     })
   }, [assigneeFilter, dueFilter, priorityFilter, projectFilter, showCompleted, statusFilter, tasks, user?.id])
+
+  const ganttProjects = useMemo(() => visibleProjects.filter((project) => {
+    const hasVisibleTasks = visibleTasks.some((task) => task.project_id === project.id)
+    if (!hasVisibleTasks) return false
+    if (!project.is_personal) return true
+    return tasks.some((task) => task.project_id === project.id && task.status !== 'done')
+  }), [tasks, visibleProjects, visibleTasks])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -283,6 +305,10 @@ export default function DashboardPage() {
     setShareProject(project)
     setSelectedProject(project)
     setShareEmail('')
+    if (project.is_personal) {
+      setMembers([])
+      return
+    }
     const { data } = await supabase
       .from('project_members')
       .select('id, role, user_id, users(email, full_name)')
@@ -293,6 +319,10 @@ export default function DashboardPage() {
   const handleShare = async (e: React.FormEvent) => {
     e.preventDefault()
     setErrorMsg('')
+    if (shareProject?.is_personal) {
+      setErrorMsg('L’Inbox personale è privata e non può essere condivisa.')
+      return
+    }
     const { data: targetUser } = await supabase
       .from('users')
       .select('id')
@@ -331,6 +361,10 @@ export default function DashboardPage() {
   const handleSaveProject = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!selectedProject) return
+    if (selectedProject.is_personal) {
+      setErrorMsg('L’Inbox personale è gestita automaticamente.')
+      return
+    }
     setErrorMsg('')
     setSuccessMsg('')
 
@@ -450,6 +484,135 @@ export default function DashboardPage() {
     await handleTaskDateChange(task, startDate, dueDate)
   }
 
+  const clearUndoStatus = () => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current)
+      undoTimerRef.current = null
+    }
+    setUndoTaskStatus(null)
+  }
+
+  const handleTaskStatusChange = async (
+    task: Task,
+    status: Task['status'],
+    offerUndo = true,
+  ) => {
+    if (status === task.status) return
+    setErrorMsg('')
+    setSuccessMsg('')
+    clearUndoStatus()
+    setSavingTaskId(task.id)
+    setTasks((currentTasks) => currentTasks.map((currentTask) => (
+      currentTask.id === task.id ? { ...currentTask, status } : currentTask
+    )))
+    setSelectedTask((currentTask) => (
+      currentTask?.id === task.id ? { ...currentTask, status } : currentTask
+    ))
+
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', task.id)
+        .select('id')
+        .single()
+
+      if (error || !data) throw error || new Error('Task non trovato')
+
+      if (status === 'done' && offerUndo) {
+        setSuccessMsg('Task completato.')
+        setUndoTaskStatus({
+          taskId: task.id,
+          title: task.title,
+          previousStatus: task.status,
+        })
+        undoTimerRef.current = setTimeout(() => {
+          setUndoTaskStatus(null)
+          undoTimerRef.current = null
+        }, 7000)
+      } else {
+        setSuccessMsg(offerUndo ? 'Stato aggiornato.' : 'Completamento annullato.')
+      }
+    } catch (error) {
+      setErrorMsg(
+        `Non sono riuscito ad aggiornare lo stato: ${
+          error instanceof Error ? error.message : 'riprova tra poco'
+        }`
+      )
+      await loadData()
+    } finally {
+      setSavingTaskId(null)
+    }
+  }
+
+  const handleUndoTaskStatus = async () => {
+    if (!undoTaskStatus) return
+    const task = tasks.find((currentTask) => currentTask.id === undoTaskStatus.taskId)
+    if (!task) {
+      clearUndoStatus()
+      return
+    }
+    const previousStatus = undoTaskStatus.previousStatus
+    clearUndoStatus()
+    await handleTaskStatusChange(task, previousStatus, false)
+  }
+
+  const handleTaskProjectChange = async (task: Task, projectId: string) => {
+    if (projectId === task.project_id) return
+    const targetProject = projects.find((project) => project.id === projectId)
+    if (!targetProject) {
+      setErrorMsg('Il progetto selezionato non è più disponibile.')
+      return
+    }
+
+    setErrorMsg('')
+    setSuccessMsg('')
+    setSavingTaskId(task.id)
+    const assigneeIsParticipant = !task.assignee_id || getProjectParticipants(projectId)
+      .some((person) => person.id === task.assignee_id)
+    const nextAssigneeId = assigneeIsParticipant ? task.assignee_id || null : null
+
+    setTasks((currentTasks) => currentTasks.map((currentTask) => (
+      currentTask.id === task.id
+        ? { ...currentTask, project_id: projectId, assignee_id: nextAssigneeId }
+        : currentTask
+    )))
+    setSelectedTask((currentTask) => (
+      currentTask?.id === task.id
+        ? { ...currentTask, project_id: projectId, assignee_id: nextAssigneeId }
+        : currentTask
+    ))
+
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .update({
+          project_id: projectId,
+          assignee_id: nextAssigneeId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', task.id)
+        .select('id')
+        .single()
+
+      if (error || !data) throw error || new Error('Task non trovato')
+      setSuccessMsg(
+        assigneeIsParticipant
+          ? `Task spostato in “${targetProject.name}”.`
+          : `Task spostato in “${targetProject.name}”. L’assegnatario è stato rimosso perché non partecipa al nuovo progetto.`
+      )
+    } catch (error) {
+      setErrorMsg(
+        `Non sono riuscito a cambiare progetto: ${
+          error instanceof Error ? error.message : 'riprova tra poco'
+        }`
+      )
+      await loadData()
+    } finally {
+      setSavingTaskId(null)
+    }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen"><p>Caricamento...</p></div>
   }
@@ -469,7 +632,18 @@ export default function DashboardPage() {
           <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">{errorMsg}</div>
         )}
         {successMsg && (
-          <div className="mb-4 rounded-lg bg-green-100 p-3 text-sm text-green-700">{successMsg}</div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-green-100 p-3 text-sm text-green-700">
+            <span>{successMsg}</span>
+            {undoTaskStatus && (
+              <button
+                type="button"
+                onClick={() => void handleUndoTaskStatus()}
+                className="rounded-md bg-white px-3 py-1.5 font-semibold text-green-800 shadow-sm hover:bg-green-50"
+              >
+                Annulla completamento di “{undoTaskStatus.title}”
+              </button>
+            )}
+          </div>
         )}
 
         <div className="flex justify-between items-center mb-8">
@@ -567,12 +741,18 @@ export default function DashboardPage() {
 
             {planningView === 'gantt' ? (
               <GanttChart
-                projects={visibleProjects}
+                projects={ganttProjects}
                 tasks={visibleTasks}
                 collapsedProjectIds={collapsedProjectIds}
-                onProjectClick={openShare}
+                onProjectClick={(project) => {
+                  if (project.is_personal) {
+                    setSuccessMsg('L’Inbox personale è privata e raccoglie i task ancora da classificare.')
+                    return
+                  }
+                  void openShare(project)
+                }}
                 onProjectToggle={(projectId) => setCollapsedProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])}
-                onCollapseAll={() => setCollapsedProjectIds(visibleProjects.map((project) => project.id))}
+                onCollapseAll={() => setCollapsedProjectIds(ganttProjects.map((project) => project.id))}
                 onExpandAll={() => setCollapsedProjectIds([])}
                 onTaskClick={setSelectedTask}
                 onTaskDateChange={handleTaskDateChange}
@@ -580,12 +760,13 @@ export default function DashboardPage() {
               />
             ) : (
               <DeadlineTable
-                projects={visibleProjects}
+                projects={projects}
                 tasks={visibleTasks}
                 users={teamUsers}
-                onProjectClick={openShare}
                 onTaskClick={setSelectedTask}
                 onTaskDueDateChange={handleTaskDueDateChange}
+                onTaskProjectChange={handleTaskProjectChange}
+                onTaskStatusChange={handleTaskStatusChange}
                 savingTaskId={savingTaskId}
               />
             )}

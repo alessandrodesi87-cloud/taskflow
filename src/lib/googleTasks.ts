@@ -2,6 +2,7 @@ import 'server-only'
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { ensurePersonalInbox } from '@/lib/personalInbox'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -363,11 +364,21 @@ async function markGoogleTaskCompleted(
 }
 
 async function syncGoogleAccount(admin: SupabaseClient, account: GoogleAccount) {
-  if (!account.default_project_id) {
-    throw new Error('Scegli prima il progetto di destinazione')
+  let destinationProjectId = account.default_project_id
+  if (!destinationProjectId) {
+    const inbox = await ensurePersonalInbox(admin, account.user_id)
+    destinationProjectId = inbox.id
+    const { error: defaultProjectError } = await admin
+      .from('gmail_accounts')
+      .update({ default_project_id: inbox.id })
+      .eq('id', account.id)
+      .eq('user_id', account.user_id)
+    if (defaultProjectError) {
+      throw new Error('Impossibile impostare l’Inbox personale come destinazione')
+    }
   }
 
-  if (!(await canUseProject(admin, account.user_id, account.default_project_id))) {
+  if (!(await canUseProject(admin, account.user_id, destinationProjectId))) {
     throw new Error('Il progetto di destinazione non è più accessibile')
   }
 
@@ -419,7 +430,7 @@ async function syncGoogleAccount(admin: SupabaseClient, account: GoogleAccount) 
         ].filter(Boolean).join('\n\n')
         const { error: insertError } = await admin.from('tasks').insert({
           id: localTaskId,
-          project_id: account.default_project_id,
+          project_id: destinationProjectId,
           title: task.title?.trim() || 'Task Google senza titolo',
           description,
           owner_id: account.user_id,

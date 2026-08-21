@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
+import { ensurePersonalInbox } from '@/lib/personalInbox'
 import {
   exchangeGoogleCode,
   getGoogleAccountEmail,
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
     const admin = getSupabaseAdmin()
     const { data: existing, error: existingError } = await admin
       .from('gmail_accounts')
-      .select('refresh_token')
+      .select('refresh_token, default_project_id')
       .eq('user_id', payload.userId)
       .eq('email', email)
       .maybeSingle()
@@ -59,6 +60,8 @@ export async function GET(request: NextRequest) {
     if (!refreshToken) {
       throw new Error('Google non ha autorizzato la sincronizzazione automatica')
     }
+    const defaultProjectId = existing?.default_project_id
+      || (await ensurePersonalInbox(admin, payload.userId)).id
 
     const { error: saveError } = await admin
       .from('gmail_accounts')
@@ -68,6 +71,7 @@ export async function GET(request: NextRequest) {
           email,
           access_token: tokens.access_token,
           refresh_token: refreshToken,
+          default_project_id: defaultProjectId,
           connected_at: new Date().toISOString(),
         },
         { onConflict: 'user_id,email' },

@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
     context.admin
       .from('projects')
       .select('id, name, owner_id, start_date, end_date, created_at')
+      .eq('is_personal', false)
       .order('name', { ascending: true }),
     context.admin
       .from('users')
@@ -67,11 +68,14 @@ export async function PATCH(request: NextRequest) {
 
   const { data: currentProject, error: readError } = await context.admin
     .from('projects')
-    .select('id, owner_id')
+    .select('id, owner_id, is_personal')
     .eq('id', body.projectId)
     .maybeSingle()
   if (readError || !currentProject) {
     return NextResponse.json({ error: 'Progetto non trovato' }, { status: 404 })
+  }
+  if (currentProject.is_personal) {
+    return NextResponse.json({ error: 'L’Inbox personale non può essere trasferita.' }, { status: 400 })
   }
 
   const { error: updateError } = await context.admin

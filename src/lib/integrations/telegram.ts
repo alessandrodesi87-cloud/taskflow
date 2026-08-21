@@ -7,6 +7,7 @@ import {
   timingSafeEqual,
 } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { ensurePersonalInbox } from '@/lib/personalInbox'
 
 const TELEGRAM_API_URL = 'https://api.telegram.org'
 const DEFAULT_TIMEZONE = 'Europe/Rome'
@@ -403,11 +404,10 @@ async function createTaskFromTelegram(
     .eq('user_id', userId)
     .maybeSingle()
   if (preferenceError) throw new Error(preferenceError.message)
-  if (!preference?.telegram_default_project_id) {
-    return { ok: false, error: 'Scegli prima il progetto predefinito nelle Impostazioni di TaskFlow.' }
-  }
+  const defaultProjectId = preference?.telegram_default_project_id
+    || (await ensurePersonalInbox(admin, userId)).id
 
-  const project = await canUseProject(admin, userId, preference.telegram_default_project_id)
+  const project = await canUseProject(admin, userId, defaultProjectId)
   if (!project) return { ok: false, error: 'Il progetto predefinito non è più disponibile. Scegline un altro nelle Impostazioni.' }
 
   const today = localDateAndTime(new Date(), timezone).date

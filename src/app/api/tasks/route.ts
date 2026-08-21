@@ -45,11 +45,27 @@ export async function POST(request: NextRequest) {
       priority = 'medium',
       email_origin,
     } = body
+    let destinationProjectId = typeof project_id === 'string' && project_id
+      ? project_id
+      : null
+
+    if (!destinationProjectId) {
+      const { data: personalInbox, error: inboxError } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('owner_id', session.user.id)
+        .eq('is_personal', true)
+        .single()
+      if (inboxError || !personalInbox) {
+        return NextResponse.json({ error: 'Inbox personale non disponibile' }, { status: 409 })
+      }
+      destinationProjectId = personalInbox.id
+    }
 
     const { data, error } = await supabase
       .from('tasks')
       .insert({
-        project_id,
+        project_id: destinationProjectId,
         title,
         description,
         start_date,

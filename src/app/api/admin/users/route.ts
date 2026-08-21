@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/serverAuth'
+import { ensurePersonalInbox } from '@/lib/personalInbox'
 
 export const dynamic = 'force-dynamic'
 
@@ -118,18 +119,32 @@ export async function PATCH(request: NextRequest) {
 
   const { data: ownedProjects, error: projectsError } = await context.admin
     .from('projects')
-    .select('id')
+    .select('id, is_personal')
     .eq('owner_id', userId)
   if (projectsError) {
     return NextResponse.json({ error: 'Impossibile controllare i progetti dell’utente' }, { status: 500 })
   }
 
+  const regularProjects = (ownedProjects || []).filter((project) => !project.is_personal)
+  const personalProject = (ownedProjects || []).find((project) => project.is_personal)
+  let personalTaskCount = 0
+  if (personalProject) {
+    const { count, error: personalTasksError } = await context.admin
+      .from('tasks')
+      .select('id', { count: 'exact', head: true })
+      .eq('project_id', personalProject.id)
+    if (personalTasksError) {
+      return NextResponse.json({ error: 'Impossibile controllare l’Inbox personale.' }, { status: 500 })
+    }
+    personalTaskCount = count || 0
+  }
+
   const replacementUserId = body?.replacementUserId || ''
-  if ((ownedProjects?.length || 0) > 0 && !replacementUserId) {
+  if ((regularProjects.length > 0 || personalTaskCount > 0) && !replacementUserId) {
     return NextResponse.json({
       error: 'Scegli chi erediterà progetti e task prima di sospendere l’utente.',
       requires_replacement: true,
-      owned_projects: ownedProjects?.length || 0,
+      owned_projects: regularProjects.length,
     }, { status: 409 })
   }
 
@@ -151,8 +166,12 @@ export async function PATCH(request: NextRequest) {
 
   try {
     if (replacementUserId) {
+      const replacementInbox = await ensurePersonalInbox(context.admin, replacementUserId)
       const updates = await Promise.all([
-        context.admin.from('projects').update({ owner_id: replacementUserId, updated_at: new Date().toISOString() }).eq('owner_id', userId),
+        context.admin.from('projects').update({ owner_id: replacementUserId, updated_at: new Date().toISOString() }).eq('owner_id', userId).eq('is_personal', false),
+        personalProject
+          ? context.admin.from('tasks').update({ project_id: replacementInbox.id, owner_id: replacementUserId, assignee_id: replacementUserId, updated_at: new Date().toISOString() }).eq('project_id', personalProject.id)
+          : Promise.resolve({ error: null }),
         context.admin.from('tasks').update({ owner_id: replacementUserId, updated_at: new Date().toISOString() }).eq('owner_id', userId),
         context.admin.from('tasks').update({ assignee_id: replacementUserId, updated_at: new Date().toISOString() }).eq('assignee_id', userId),
       ])
@@ -174,7 +193,8 @@ export async function PATCH(request: NextRequest) {
       changes: {
         email: target.email,
         replacement_user_id: replacementUserId || null,
-        transferred_projects: ownedProjects?.length || 0,
+        transferred_projects: regularProjects.length,
+        transferred_personal_tasks: personalTaskCount,
       },
     })
   } catch (error) {
@@ -186,6 +206,6 @@ export async function PATCH(request: NextRequest) {
 
   return NextResponse.json({
     success: true,
-    transferred_projects: ownedProjects?.length || 0,
+    transferred_projects: regularProjects.length,
   })
 }
