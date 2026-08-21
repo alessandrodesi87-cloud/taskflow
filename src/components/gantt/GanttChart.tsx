@@ -729,7 +729,7 @@ export default function GanttChart({
                       style={fullRowStyle}
                     >
                       <div
-                        className="sticky left-0 z-10 flex-none border-r border-slate-200 bg-white py-3 pl-8 pr-4"
+                        className="sticky left-0 z-10 flex h-10 flex-none items-center border-r border-slate-200 bg-white pl-8 pr-4"
                         style={{ width: LEFT_COLUMN_WIDTH }}
                       >
                         <button
@@ -740,20 +740,17 @@ export default function GanttChart({
                         >
                           {task.title}
                         </button>
-                        <p className="mt-0.5 text-xs text-slate-500">
-                          {formatRange(displayedStartDate, displayedDueDate)}
-                        </p>
                       </div>
 
                       <TimelineLane
                         dayWidth={dayWidth}
                         days={dateRange.days}
-                        heightClass="h-14"
+                        heightClass="h-10"
                         weekendIndexes={weekendDayIndexes}
                         todayIndex={todayIndex}
                       >
                         <div
-                          className={`absolute top-1/2 z-[2] h-7 -translate-y-1/2 touch-none rounded-md text-white shadow-sm transition hover:-translate-y-[55%] hover:shadow-md ${
+                          className={`absolute top-1/2 z-[2] h-6 -translate-y-1/2 touch-none rounded-md text-white shadow-sm transition hover:-translate-y-[55%] hover:shadow-md ${
                             activeDrag ? 'ring-2 ring-blue-200 ring-offset-2' : ''
                           } ${savingTaskId === task.id ? 'opacity-60' : ''} ${
                             statusColors[task.status]

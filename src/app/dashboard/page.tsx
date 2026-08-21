@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { Project, Task } from '@/types'
 import GanttChart from '@/components/gantt/GanttChart'
+import DeadlineTable from '@/components/planning/DeadlineTable'
 import AppHeader from '@/components/AppHeader'
 import type { User as AuthUser } from '@supabase/supabase-js'
 
@@ -32,6 +33,7 @@ interface CurrentProfile {
 
 type AssigneeFilter = 'all' | 'mine' | 'unassigned'
 type DueFilter = 'all' | 'overdue' | 'upcoming'
+type PlanningView = 'gantt' | 'deadlines'
 
 function localDateKey(date = new Date()) {
   const year = date.getFullYear()
@@ -66,6 +68,7 @@ export default function DashboardPage() {
   const [priorityFilter, setPriorityFilter] = useState<'all' | Task['priority']>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | Task['status']>('all')
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>([])
+  const [planningView, setPlanningView] = useState<PlanningView>('deadlines')
   const router = useRouter()
 
   // Form nuovo progetto
@@ -130,6 +133,25 @@ export default function DashboardPage() {
         router.push('/auth/login')
         return
       }
+      const storedPlanningView = window.localStorage.getItem(
+        `taskflow:planning-view:${session.user.id}`
+      )
+      if (storedPlanningView === 'gantt' || storedPlanningView === 'deadlines') {
+        setPlanningView(storedPlanningView)
+      }
+      const storedCollapsed = window.localStorage.getItem(
+        `taskflow:collapsed-projects:${session.user.id}`
+      )
+      if (storedCollapsed) {
+        try {
+          const parsed = JSON.parse(storedCollapsed) as unknown
+          if (Array.isArray(parsed)) {
+            setCollapsedProjectIds(parsed.filter((value): value is string => typeof value === 'string'))
+          }
+        } catch {
+          window.localStorage.removeItem(`taskflow:collapsed-projects:${session.user.id}`)
+        }
+      }
       setUser(session.user)
       try {
         const profileResponse = await fetch('/api/profile', {
@@ -138,15 +160,6 @@ export default function DashboardPage() {
         if (profileResponse.ok) {
           const profileBody = await profileResponse.json() as { profile: CurrentProfile }
           setProfile(profileBody.profile)
-        }
-        const storedCollapsed = window.localStorage.getItem(
-          `taskflow:collapsed-projects:${session.user.id}`
-        )
-        if (storedCollapsed) {
-          const parsed = JSON.parse(storedCollapsed) as unknown
-          if (Array.isArray(parsed)) {
-            setCollapsedProjectIds(parsed.filter((value): value is string => typeof value === 'string'))
-          }
         }
         await loadData()
       } catch (error) {
@@ -165,6 +178,11 @@ export default function DashboardPage() {
       JSON.stringify(collapsedProjectIds)
     )
   }, [collapsedProjectIds, user])
+
+  useEffect(() => {
+    if (!user) return
+    window.localStorage.setItem(`taskflow:planning-view:${user.id}`, planningView)
+  }, [planningView, user])
 
   const getProjectParticipants = useCallback((projectId: string) => {
     const project = projects.find((item) => item.id === projectId)
@@ -427,6 +445,11 @@ export default function DashboardPage() {
     }
   }
 
+  const handleTaskDueDateChange = async (task: Task, dueDate: string) => {
+    const startDate = task.start_date > dueDate ? dueDate : task.start_date
+    await handleTaskDateChange(task, startDate, dueDate)
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-screen"><p>Caricamento...</p></div>
   }
@@ -509,18 +532,63 @@ export default function DashboardPage() {
               </div>
               <p className="mt-3 text-xs text-gray-500">{visibleTasks.length} task visualizzati · per impostazione iniziale i completati sono nascosti</p>
             </div>
-            <GanttChart
-              projects={visibleProjects}
-              tasks={visibleTasks}
-              collapsedProjectIds={collapsedProjectIds}
-              onProjectClick={openShare}
-              onProjectToggle={(projectId) => setCollapsedProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])}
-              onCollapseAll={() => setCollapsedProjectIds(visibleProjects.map((project) => project.id))}
-              onExpandAll={() => setCollapsedProjectIds([])}
-              onTaskClick={setSelectedTask}
-              onTaskDateChange={handleTaskDateChange}
-              savingTaskId={savingTaskId}
-            />
+            <div className="mb-3 flex justify-end">
+              <div
+                className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1"
+                role="group"
+                aria-label="Modalità di pianificazione"
+              >
+                <button
+                  type="button"
+                  onClick={() => setPlanningView('gantt')}
+                  aria-pressed={planningView === 'gantt'}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    planningView === 'gantt'
+                      ? 'bg-white text-blue-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Gantt compatto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPlanningView('deadlines')}
+                  aria-pressed={planningView === 'deadlines'}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    planningView === 'deadlines'
+                      ? 'bg-white text-blue-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Lista scadenze
+                </button>
+              </div>
+            </div>
+
+            {planningView === 'gantt' ? (
+              <GanttChart
+                projects={visibleProjects}
+                tasks={visibleTasks}
+                collapsedProjectIds={collapsedProjectIds}
+                onProjectClick={openShare}
+                onProjectToggle={(projectId) => setCollapsedProjectIds((current) => current.includes(projectId) ? current.filter((id) => id !== projectId) : [...current, projectId])}
+                onCollapseAll={() => setCollapsedProjectIds(visibleProjects.map((project) => project.id))}
+                onExpandAll={() => setCollapsedProjectIds([])}
+                onTaskClick={setSelectedTask}
+                onTaskDateChange={handleTaskDateChange}
+                savingTaskId={savingTaskId}
+              />
+            ) : (
+              <DeadlineTable
+                projects={visibleProjects}
+                tasks={visibleTasks}
+                users={teamUsers}
+                onProjectClick={openShare}
+                onTaskClick={setSelectedTask}
+                onTaskDueDateChange={handleTaskDueDateChange}
+                savingTaskId={savingTaskId}
+              />
+            )}
           </>
         )}
       </main>
