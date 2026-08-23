@@ -1,59 +1,117 @@
 'use client'
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import AuthShell from '@/components/auth/AuthShell'
+import GoogleAuthButton from '@/components/auth/GoogleAuthButton'
+import { signInWithGoogle } from '@/lib/authClient'
+import { supabase } from '@/lib/supabase'
+
+function authErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : ''
+  if (message.toLowerCase().includes('invalid login credentials')) {
+    return 'Email o password non corretti.'
+  }
+  if (message.toLowerCase().includes('email not confirmed')) {
+    return 'Devi prima confermare l’email che ti abbiamo inviato.'
+  }
+  return message || 'Non siamo riusciti ad accedere. Riprova tra poco.'
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState<'password' | 'google' | null>(null)
   const router = useRouter()
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
+  const handleLogin = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setLoading('password')
     setError('')
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) throw error
-      router.push('/dashboard')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Errore di accesso')
+      const { error: loginError } = await supabase.auth.signInWithPassword({ email, password })
+      if (loginError) throw loginError
+      router.replace('/dashboard')
+    } catch (caughtError) {
+      setError(authErrorMessage(caughtError))
     } finally {
-      setLoading(false)
+      setLoading(null)
+    }
+  }
+
+  const handleGoogleLogin = async () => {
+    setLoading('google')
+    setError('')
+
+    const { error: googleError } = await signInWithGoogle()
+    if (googleError) {
+      setError('L’accesso con Google non è ancora disponibile. Puoi usare email e password.')
+      setLoading(null)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4">
-      <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
-        <h2 className="text-center text-3xl font-bold text-gray-900">TaskFlow</h2>
-        <p className="mt-2 text-center text-sm text-gray-600">Team Task Manager</p>
+    <AuthShell title="Bentornato" subtitle="Accedi per organizzare progetti, scadenze e attività.">
+      {error ? (
+        <div className="mt-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">
+          {error}
+        </div>
+      ) : null}
 
-        {error && <div className="mt-4 p-3 bg-red-100 text-red-700 rounded text-sm">{error}</div>}
-
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" required />
-          </div>
-          <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:opacity-50">
-            {loading ? 'Accesso in corso...' : 'Accedi'}
-          </button>
-        </form>
-
-        <p className="mt-4 text-center text-sm text-gray-600">
-          Non hai un account? <Link href="/auth/signup" className="text-blue-600 hover:text-blue-700">Registrati</Link>
-        </p>
+      <div className="mt-8">
+        <GoogleAuthButton
+          label={loading === 'google' ? 'Collegamento a Google…' : 'Continua con Google'}
+          disabled={loading !== null}
+          onClick={handleGoogleLogin}
+        />
+        <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-wide text-slate-400">
+          <span className="h-px flex-1 bg-slate-200" />
+          oppure
+          <span className="h-px flex-1 bg-slate-200" />
+        </div>
       </div>
-    </div>
+
+      <form className="space-y-5" onSubmit={handleLogin}>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Email</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            autoComplete="email"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-[#0b2f57] focus:ring-2 focus:ring-[#0b2f57]/15"
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-[#0b2f57] focus:ring-2 focus:ring-[#0b2f57]/15"
+            required
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={loading !== null}
+          className="w-full rounded-lg bg-[#0b2f57] px-4 py-2.5 font-semibold text-white transition-colors hover:bg-[#082544] disabled:cursor-wait disabled:opacity-60"
+        >
+          {loading === 'password' ? 'Accesso in corso…' : 'Accedi'}
+        </button>
+      </form>
+
+      <p className="mt-6 text-center text-sm text-slate-600">
+        Non hai un account?{' '}
+        <Link href="/auth/signup" className="font-semibold text-[#0b2f57] hover:underline">
+          Registrati
+        </Link>
+      </p>
+    </AuthShell>
   )
 }

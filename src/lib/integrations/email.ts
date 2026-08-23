@@ -4,7 +4,7 @@ import { Resend } from 'resend'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const DEFAULT_TIMEZONE = 'Europe/Rome'
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'TaskFlow <notifications@graveldi.cc>'
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Cronovia <notifiche@notify.cronovia.it>'
 
 export interface NotificationDefaults {
   email_enabled: boolean
@@ -212,7 +212,7 @@ function buildReminderContent(
   deliveryDate: string,
   isTest: boolean
 ) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://taskflow-zeta-plum.vercel.app'
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://cronovia.it'
   const canReply = Boolean(process.env.RESEND_REPLY_TO)
   const greeting = user.full_name?.trim() ? `Ciao ${escapeHtml(user.full_name.trim())},` : 'Ciao,'
   const overdueCount = tasks.filter((task) => task.due_date < deliveryDate).length
@@ -251,8 +251,8 @@ function buildReminderContent(
   <html lang="it">
     <body style="margin:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827">
       <div style="max-width:640px;margin:0 auto;padding:28px 16px">
-        <div style="padding:24px;border-radius:16px 16px 0 0;background:#2563eb;color:white">
-          <div style="font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">TaskFlow</div>
+        <div style="padding:24px;border-radius:16px 16px 0 0;background:#0b2f57;color:white">
+          <div style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#d5b55b">Cronovia</div>
           <h1 style="margin:8px 0 0;font-size:26px">${isTest ? 'Email di prova' : 'La tua agenda di oggi'}</h1>
         </div>
         <div style="padding:24px;border-radius:0 0 16px 16px;background:white">
@@ -260,9 +260,9 @@ function buildReminderContent(
           <p style="color:#4b5563">Hai ${summary}.</p>
           ${tasks.length > 0 ? `<table role="presentation" style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:12px">${rows}</table>` : emptyState}
           ${replyHelp}
-          <a href="${escapeHtml(appUrl)}/dashboard" style="display:inline-block;margin-top:24px;padding:12px 18px;border-radius:9px;background:#2563eb;color:white;text-decoration:none;font-weight:700">Apri TaskFlow</a>
+          <a href="${escapeHtml(appUrl)}/dashboard" style="display:inline-block;margin-top:24px;padding:12px 18px;border-radius:9px;background:#0b2f57;color:white;text-decoration:none;font-weight:700">Apri Cronovia</a>
         </div>
-        <p style="margin:16px 4px 0;text-align:center;font-size:12px;color:#9ca3af">Puoi cambiare orario e preferenze dalle impostazioni di TaskFlow.</p>
+        <p style="margin:16px 4px 0;text-align:center;font-size:12px;color:#9ca3af">Puoi cambiare orario e preferenze dalle impostazioni di Cronovia.</p>
       </div>
     </body>
   </html>`
@@ -270,12 +270,12 @@ function buildReminderContent(
   const lines = tasks.map((task) => (
     `- ${task.title} | ${task.project_name} | ${task.due_date < deliveryDate ? `scaduto ${task.due_date}` : 'scade oggi'} | ID ${task.id}`
   ))
-  const text = `${isTest ? 'Email di prova TaskFlow' : 'La tua agenda TaskFlow'}\n\n${user.full_name ? `Ciao ${user.full_name},` : 'Ciao,'}\nHai ${summary}.\n\n${lines.length > 0 ? lines.join('\n') : 'Nessun task urgente.'}\n\nApri TaskFlow: ${appUrl}/dashboard${canReply && tasks.length > 0 ? '\n\nRispondi con DONE: ID-task oppure RESCHEDULE: ID-task YYYY-MM-DD' : ''}`
+  const text = `${isTest ? 'Email di prova Cronovia' : 'La tua agenda Cronovia'}\n\n${user.full_name ? `Ciao ${user.full_name},` : 'Ciao,'}\nHai ${summary}.\n\n${lines.length > 0 ? lines.join('\n') : 'Nessun task urgente.'}\n\nApri Cronovia: ${appUrl}/dashboard${canReply && tasks.length > 0 ? '\n\nRispondi con DONE: ID-task oppure RESCHEDULE: ID-task YYYY-MM-DD' : ''}`
 
   return {
     subject: isTest
-      ? 'TaskFlow: email di prova riuscita'
-      : `TaskFlow: ${tasks.length} task da controllare oggi`,
+      ? 'Cronovia: email di prova riuscita'
+      : `Cronovia: ${tasks.length} task da controllare oggi`,
     html,
     text,
   }

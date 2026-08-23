@@ -343,7 +343,7 @@ function buildReminderMessage(
   }]))
 
   return {
-    text: `${greeting}\n\n<b>${isTest ? 'Test TaskFlow' : 'TaskFlow · attività da controllare'}</b>\n\n${rows.join('\n\n')}\n\nPuoi completare un task con il pulsante oppure scrivere /today per aggiornare l’elenco.`,
+    text: `${greeting}\n\n<b>${isTest ? 'Test Cronovia' : 'Cronovia · attività da controllare'}</b>\n\n${rows.join('\n\n')}\n\nPuoi completare un task con il pulsante oppure scrivere /today per aggiornare l’elenco.`,
     replyMarkup: { inline_keyboard: buttons },
   }
 }
@@ -480,7 +480,7 @@ export async function processTelegramUpdate(admin: SupabaseClient, update: Teleg
   if (callback?.data?.startsWith('done:')) {
     const user = await loadTelegramUser(admin, chatId)
     if (!user) {
-      await answerCallbackQuery(callback.id, 'Collega prima Telegram da TaskFlow.')
+      await answerCallbackQuery(callback.id, 'Collega prima Telegram da Cronovia.')
       return
     }
     const title = await markTaskDone(admin, user.id, callback.data.slice(5))
@@ -501,18 +501,18 @@ export async function processTelegramUpdate(admin: SupabaseClient, update: Teleg
       try {
         const userId = await consumeTelegramLinkToken(admin, token, chatId)
         if (!userId) {
-          await sendTelegramMessage(chatId, 'Questo collegamento è scaduto o è già stato usato. Generane uno nuovo nelle Impostazioni di TaskFlow.')
+          await sendTelegramMessage(chatId, 'Questo collegamento è scaduto o è già stato usato. Generane uno nuovo nelle Impostazioni di Cronovia.')
           return
         }
         await sendTelegramMessage(
           chatId,
-          '<b>Telegram è collegato a TaskFlow.</b>\n\nScrivi un testo per creare un task nel progetto predefinito, /today per vedere le scadenze o /help per tutti i comandi.'
+          '<b>Telegram è collegato a Cronovia.</b>\n\nScrivi un testo per creare un task nel progetto predefinito, /today per vedere le scadenze o /help per tutti i comandi.'
         )
         return
       } catch (error) {
         const message = error instanceof Error && error.message.includes('telegram_chat_id')
-          ? 'Questo account Telegram è già collegato a un altro utente TaskFlow.'
-          : 'Il collegamento non è riuscito. Genera un nuovo link dalle Impostazioni di TaskFlow.'
+          ? 'Questo account Telegram è già collegato a un altro utente Cronovia.'
+          : 'Il collegamento non è riuscito. Genera un nuovo link dalle Impostazioni di Cronovia.'
         await sendTelegramMessage(chatId, message)
         return
       }
@@ -521,14 +521,14 @@ export async function processTelegramUpdate(admin: SupabaseClient, update: Teleg
 
   const user = await loadTelegramUser(admin, chatId)
   if (!user) {
-    await sendTelegramMessage(chatId, 'Apri TaskFlow → Impostazioni → Telegram e usa il pulsante “Collega Telegram”.')
+    await sendTelegramMessage(chatId, 'Apri Cronovia → Impostazioni → Telegram e usa il pulsante “Collega Telegram”.')
     return
   }
 
   if (command === '/help' || command === '/start') {
     await sendTelegramMessage(
       chatId,
-      '<b>Comandi TaskFlow</b>\n\n/today — attività di oggi e arretrate\n/new Titolo — crea un task\n/done ID — completa un task\n\nPuoi anche scrivere direttamente il titolo. Per una scadenza diversa: Titolo | 2026-08-15'
+      '<b>Comandi Cronovia</b>\n\n/today — attività di oggi e arretrate\n/new Titolo — crea un task\n/done ID — completa un task\n\nPuoi anche scrivere direttamente il titolo. Per una scadenza diversa: Titolo | 2026-08-15'
     )
     return
   }
