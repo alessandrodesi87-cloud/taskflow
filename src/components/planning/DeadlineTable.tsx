@@ -12,6 +12,7 @@ import {
 import { addDays, format, isValid, parseISO, startOfDay } from 'date-fns'
 import { it } from 'date-fns/locale'
 import { RotateCcw, Search, X } from 'lucide-react'
+import ItalianDateInput from '@/components/ui/ItalianDateInput'
 import { Project, Task } from '@/types'
 
 interface TeamUser {
@@ -176,6 +177,7 @@ export default function DeadlineTable({
 }: DeadlineTableProps) {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [draftDueDate, setDraftDueDate] = useState('')
+  const [draftDueDateValid, setDraftDueDateValid] = useState(true)
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [columnWidths, setColumnWidths] = useState<Record<ColumnId, number>>(
@@ -294,16 +296,18 @@ export default function DeadlineTable({
 
   const beginDateEdit = (task: Task) => {
     setDraftDueDate(task.due_date)
+    setDraftDueDateValid(Boolean(parseTaskDate(task.due_date)))
     setEditingTaskId(task.id)
   }
 
   const cancelDateEdit = () => {
     setDraftDueDate('')
+    setDraftDueDateValid(true)
     setEditingTaskId(null)
   }
 
   const confirmDateEdit = (task: Task) => {
-    if (!parseTaskDate(draftDueDate)) return
+    if (!draftDueDateValid || !parseTaskDate(draftDueDate)) return
     void updateDueDate(task, draftDueDate)
   }
 
@@ -312,7 +316,7 @@ export default function DeadlineTable({
       event.preventDefault()
       cancelDateEdit()
     }
-    if (event.key === 'Enter' && parseTaskDate(draftDueDate)) {
+    if (event.key === 'Enter' && draftDueDateValid && parseTaskDate(draftDueDate)) {
       event.preventDefault()
       confirmDateEdit(task)
     }
@@ -569,20 +573,21 @@ export default function DeadlineTable({
                     <td className="px-4 py-2.5">
                       {editingTaskId === task.id ? (
                         <div className="flex min-w-[260px] items-center gap-1.5">
-                          <input
-                            type="date"
+                          <ItalianDateInput
                             value={draftDueDate}
                             min="2000-01-01"
                             autoFocus
-                            onChange={(event) => setDraftDueDate(event.target.value)}
+                            required
+                            onChange={setDraftDueDate}
+                            onValidityChange={setDraftDueDateValid}
                             onKeyDown={(event) => handleDateKeyDown(event, task)}
-                            className="w-[145px] rounded-lg border border-blue-500 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none ring-2 ring-blue-100"
-                            aria-label={`Nuova scadenza per ${task.title}`}
+                            className="!w-[150px] py-1.5"
+                            ariaLabel={`Nuova scadenza per ${task.title}`}
                           />
                           <button
                             type="button"
                             onClick={() => confirmDateEdit(task)}
-                            disabled={!parseTaskDate(draftDueDate)}
+                            disabled={!draftDueDateValid || !parseTaskDate(draftDueDate)}
                             className="rounded-md bg-[#0b2f57] px-2 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             Salva
