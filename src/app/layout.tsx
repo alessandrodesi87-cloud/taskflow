@@ -5,8 +5,11 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'TaskFlow',
-  description: 'Team Task Manager',
+  title: {
+    default: 'Cronovia',
+    template: '%s · Cronovia',
+  },
+  description: 'Progetti, attività e scadenze lungo un’unica linea del tempo.',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

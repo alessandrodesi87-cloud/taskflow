@@ -215,7 +215,7 @@ export default function SettingsPage() {
   }
 
   const disconnectGoogle = async (account: GoogleAccountView) => {
-    if (!window.confirm(`Vuoi scollegare ${account.email} da TaskFlow?`)) return
+    if (!window.confirm(`Vuoi scollegare ${account.email} da Cronovia?`)) return
 
     setWorking(account.id)
     setMessage(null)
@@ -250,7 +250,7 @@ export default function SettingsPage() {
         setMessage({
           type: 'success',
           text: result.imported > 0
-            ? `${result.imported} task importati in TaskFlow.`
+            ? `${result.imported} task importati in Cronovia.`
             : 'Sincronizzazione completata: nessun nuovo task da importare.',
         })
       }
@@ -411,7 +411,7 @@ export default function SettingsPage() {
   }
 
   const disconnectTelegram = async () => {
-    if (!window.confirm('Vuoi scollegare Telegram da TaskFlow?')) return
+    if (!window.confirm('Vuoi scollegare Telegram da Cronovia?')) return
     setWorking('telegram-disconnect')
     setMessage(null)
     try {

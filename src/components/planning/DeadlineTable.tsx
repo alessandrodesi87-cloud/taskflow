@@ -94,6 +94,7 @@ export default function DeadlineTable({
   savingTaskId,
 }: DeadlineTableProps) {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const [draftDueDate, setDraftDueDate] = useState('')
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null)
   const highlightTimerRef = useRef<number | null>(null)
   const today = useMemo(() => startOfDay(new Date()), [])
@@ -137,12 +138,6 @@ export default function DeadlineTable({
     { overdue: 0, today: 0 }
   ), [orderedTasks, todayKey, weekKey])
 
-  const closeDateEditor = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Escape') {
-      setEditingTaskId(null)
-    }
-  }
-
   const highlightTask = (taskId: string) => {
     setHighlightedTaskId(taskId)
     if (highlightTimerRef.current !== null) {
@@ -155,7 +150,7 @@ export default function DeadlineTable({
   }
 
   const updateDueDate = async (task: Task, dueDate: string) => {
-    if (!dueDate || dueDate === task.due_date) {
+    if (!parseTaskDate(dueDate) || dueDate === task.due_date) {
       setEditingTaskId(null)
       return
     }
@@ -163,6 +158,32 @@ export default function DeadlineTable({
     setEditingTaskId(null)
     highlightTask(task.id)
     await onTaskDueDateChange?.(task, dueDate)
+  }
+
+  const beginDateEdit = (task: Task) => {
+    setDraftDueDate(task.due_date)
+    setEditingTaskId(task.id)
+  }
+
+  const cancelDateEdit = () => {
+    setDraftDueDate('')
+    setEditingTaskId(null)
+  }
+
+  const confirmDateEdit = (task: Task) => {
+    if (!parseTaskDate(draftDueDate)) return
+    void updateDueDate(task, draftDueDate)
+  }
+
+  const handleDateKeyDown = (event: KeyboardEvent<HTMLInputElement>, task: Task) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      cancelDateEdit()
+    }
+    if (event.key === 'Enter' && parseTaskDate(draftDueDate)) {
+      event.preventDefault()
+      confirmDateEdit(task)
+    }
   }
 
   return (
@@ -259,21 +280,37 @@ export default function DeadlineTable({
                     </td>
                     <td className="px-4 py-2.5">
                       {editingTaskId === task.id ? (
-                        <input
-                          type="date"
-                          defaultValue={task.due_date}
-                          min="2000-01-01"
-                          autoFocus
-                          onChange={(event) => void updateDueDate(task, event.target.value)}
-                          onBlur={() => setEditingTaskId(null)}
-                          onKeyDown={closeDateEditor}
-                          className="w-[150px] rounded-lg border border-blue-500 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none ring-2 ring-blue-100"
-                          aria-label={`Nuova scadenza per ${task.title}`}
-                        />
+                        <div className="flex min-w-[260px] items-center gap-1.5">
+                          <input
+                            type="date"
+                            value={draftDueDate}
+                            min="2000-01-01"
+                            autoFocus
+                            onChange={(event) => setDraftDueDate(event.target.value)}
+                            onKeyDown={(event) => handleDateKeyDown(event, task)}
+                            className="w-[145px] rounded-lg border border-blue-500 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none ring-2 ring-blue-100"
+                            aria-label={`Nuova scadenza per ${task.title}`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => confirmDateEdit(task)}
+                            disabled={!parseTaskDate(draftDueDate)}
+                            className="rounded-md bg-[#0b2f57] px-2 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Salva
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelDateEdit}
+                            className="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100"
+                          >
+                            Annulla
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"
-                          onClick={() => setEditingTaskId(task.id)}
+                          onClick={() => beginDateEdit(task)}
                           disabled={!onTaskDueDateChange || isSaving}
                           className={`inline-flex min-h-8 items-center rounded-lg px-2 py-1 text-left text-xs font-medium transition-colors disabled:cursor-wait disabled:opacity-60 ${
                             dueStateClasses[dueState]

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import BrandLogo from '@/components/BrandLogo'
 
 interface AppHeaderProps {
   email?: string | null
@@ -26,7 +27,7 @@ export default function AppHeader({
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
-    .join('') || 'TF'
+    .join('') || 'CR'
 
   useEffect(() => {
     const closeMenu = (event: MouseEvent) => {
@@ -39,7 +40,9 @@ export default function AppHeader({
   return (
     <header className="border-b border-gray-200 bg-white">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-        <Link href="/dashboard" className="text-2xl font-bold text-blue-600">TaskFlow</Link>
+        <Link href="/dashboard" className="block w-[190px] sm:w-[230px]" aria-label="Cronovia · Dashboard">
+          <BrandLogo priority />
+        </Link>
         <div className="flex items-center gap-2">
           {current !== 'dashboard' && (
             <Link href="/dashboard" className="rounded-lg px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 hover:text-blue-700">
@@ -54,7 +57,7 @@ export default function AppHeader({
               aria-expanded={open}
               aria-haspopup="menu"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">{initials}</span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0b2f57] text-xs font-bold text-white">{initials}</span>
               <span className="hidden max-w-48 truncate text-sm font-medium text-gray-700 sm:block">{label}</span>
               <span className="text-xs text-gray-400">⌄</span>
             </button>

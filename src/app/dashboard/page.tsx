@@ -920,7 +920,7 @@ export default function DashboardPage() {
 
             <div className="border-t border-gray-200 p-6">
               <h4 className="font-semibold text-gray-900">Condivisione</h4>
-              <p className="mt-1 text-sm text-gray-500">Invita un collega già registrato in TaskFlow.</p>
+              <p className="mt-1 text-sm text-gray-500">Invita un collega già registrato in Cronovia.</p>
               <form onSubmit={handleShare} className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
                 <input type="email" value={shareEmail} onChange={e => setShareEmail(e.target.value)} placeholder="email@collega.it" className="min-w-0 rounded-lg border border-gray-300 px-3 py-2" required />
                 <select value={shareRole} onChange={e => setShareRole(e.target.value as 'member' | 'co-owner')} className="rounded-lg border border-gray-300 px-2 py-2">

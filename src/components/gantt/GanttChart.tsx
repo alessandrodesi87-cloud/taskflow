@@ -100,7 +100,7 @@ const statusColors: Record<Task['status'], string> = {
   done: 'bg-emerald-600',
 }
 
-function parseTaskFlowDate(value: string) {
+function parsePlanningDate(value: string) {
   const date = parseISO(value)
   return isValid(date) ? startOfDay(date) : null
 }
@@ -175,7 +175,7 @@ export default function GanttChart({
   const dateRange = useMemo(() => {
     const dates = tasks
       .flatMap((task) => [task.start_date, task.due_date])
-      .map(parseTaskFlowDate)
+      .map(parsePlanningDate)
       .filter((date): date is Date => date !== null)
 
     if (dates.length === 0) {
@@ -271,8 +271,8 @@ export default function GanttChart({
       : undefined
 
   const getBarPosition = (start: string, end: string) => {
-    const startDate = parseTaskFlowDate(start) ?? dateRange.minDate
-    const endDate = parseTaskFlowDate(end) ?? startDate
+    const startDate = parsePlanningDate(start) ?? dateRange.minDate
+    const endDate = parsePlanningDate(end) ?? startDate
     const startIndex = differenceInCalendarDays(startDate, dateRange.minDate)
     const duration = Math.max(differenceInCalendarDays(endDate, startDate) + 1, 1)
 
@@ -310,8 +310,8 @@ export default function GanttChart({
     requestedDelta: number,
     mode: TaskInteractionMode
   ) => {
-    const startDate = parseTaskFlowDate(task.start_date)
-    const dueDate = parseTaskFlowDate(task.due_date)
+    const startDate = parsePlanningDate(task.start_date)
+    const dueDate = parsePlanningDate(task.due_date)
     if (!startDate || !dueDate) return 0
 
     const startIndex = differenceInCalendarDays(startDate, dateRange.minDate)
@@ -395,8 +395,8 @@ export default function GanttChart({
 
     if (activeDrag.deltaDays === 0) return
 
-    const startDate = parseTaskFlowDate(task.start_date)
-    const dueDate = parseTaskFlowDate(task.due_date)
+    const startDate = parsePlanningDate(task.start_date)
+    const dueDate = parsePlanningDate(task.due_date)
     if (!startDate || !dueDate) return
 
     suppressTaskClickRef.current = task.id
@@ -439,8 +439,8 @@ export default function GanttChart({
       return
     }
 
-    const startDate = parseTaskFlowDate(task.start_date)
-    const dueDate = parseTaskFlowDate(task.due_date)
+    const startDate = parsePlanningDate(task.start_date)
+    const dueDate = parsePlanningDate(task.due_date)
     if (!startDate || !dueDate) return
 
     const direction = event.key === 'ArrowRight' ? 1 : -1
@@ -467,8 +467,8 @@ export default function GanttChart({
       return
     }
 
-    const startDate = parseTaskFlowDate(task.start_date)
-    const dueDate = parseTaskFlowDate(task.due_date)
+    const startDate = parsePlanningDate(task.start_date)
+    const dueDate = parsePlanningDate(task.due_date)
     if (!startDate || !dueDate) return
 
     const direction = event.key === 'ArrowRight' ? 1 : -1
@@ -489,8 +489,8 @@ export default function GanttChart({
   }
 
   const formatRange = (start: string, end: string) => {
-    const startDate = parseTaskFlowDate(start)
-    const endDate = parseTaskFlowDate(end)
+    const startDate = parsePlanningDate(start)
+    const endDate = parsePlanningDate(end)
 
     if (!startDate || !endDate) return 'Date non disponibili'
 
@@ -686,7 +686,7 @@ export default function GanttChart({
                     activeDrag && activeDrag.mode !== 'resize-end'
                     ? format(
                         addDays(
-                          parseTaskFlowDate(task.start_date) ?? dateRange.minDate,
+                          parsePlanningDate(task.start_date) ?? dateRange.minDate,
                           activeDrag.deltaDays
                         ),
                         'yyyy-MM-dd'
@@ -696,7 +696,7 @@ export default function GanttChart({
                     activeDrag && activeDrag.mode !== 'resize-start'
                     ? format(
                         addDays(
-                          parseTaskFlowDate(task.due_date) ?? dateRange.minDate,
+                          parsePlanningDate(task.due_date) ?? dateRange.minDate,
                           activeDrag.deltaDays
                         ),
                         'yyyy-MM-dd'
