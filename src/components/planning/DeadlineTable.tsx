@@ -1,8 +1,17 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { addDays, format, isValid, parseISO, startOfDay } from 'date-fns'
 import { it } from 'date-fns/locale'
+import { RotateCcw, Search, X } from 'lucide-react'
 import { Project, Task } from '@/types'
 
 interface TeamUser {
@@ -14,15 +23,47 @@ interface TeamUser {
 interface DeadlineTableProps {
   projects: Project[]
   tasks: Task[]
+  allTasks?: Task[]
   users: TeamUser[]
+  userId?: string
+  getProjectParticipants?: (projectId: string) => TeamUser[]
   onTaskClick?: (task: Task) => void
   onTaskDueDateChange?: (task: Task, dueDate: string) => void | Promise<void>
   onTaskProjectChange?: (task: Task, projectId: string) => void | Promise<void>
   onTaskStatusChange?: (task: Task, status: Task['status']) => void | Promise<void>
+  onTaskAssigneeChange?: (task: Task, assigneeId: string | null) => void | Promise<void>
   savingTaskId?: string | null
 }
 
 type DueState = 'overdue' | 'today' | 'soon' | 'future' | 'none' | 'done'
+type ColumnId = 'project' | 'title' | 'dueDate' | 'status' | 'assignee'
+
+interface ColumnConfig {
+  id: ColumnId
+  label: string
+  defaultWidth: number
+  minWidth: number
+  maxWidth: number
+}
+
+interface ResizeState {
+  columnId: ColumnId
+  pointerId: number
+  startWidth: number
+  startX: number
+}
+
+const COLUMN_STORAGE_VERSION = 1
+const columnConfigs: ColumnConfig[] = [
+  { id: 'project', label: 'Progetto', defaultWidth: 220, minWidth: 150, maxWidth: 420 },
+  { id: 'title', label: 'Titolo', defaultWidth: 320, minWidth: 190, maxWidth: 720 },
+  { id: 'dueDate', label: 'Scadenza', defaultWidth: 190, minWidth: 150, maxWidth: 320 },
+  { id: 'status', label: 'Stato', defaultWidth: 150, minWidth: 120, maxWidth: 240 },
+  { id: 'assignee', label: 'In carico a', defaultWidth: 210, minWidth: 160, maxWidth: 360 },
+]
+const defaultColumnWidths = Object.fromEntries(
+  columnConfigs.map((column) => [column.id, column.defaultWidth])
+) as Record<ColumnId, number>
 
 const dueStateClasses: Record<DueState, string> = {
   overdue: 'bg-red-50 text-red-700 hover:bg-red-100',
@@ -83,23 +124,89 @@ function getInitials(user?: TeamUser) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
 }
 
+function normalizeSearchValue(value?: string | null) {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('it')
+    .trim()
+}
+
+function clampColumnWidth(columnId: ColumnId, width: number) {
+  const config = columnConfigs.find((column) => column.id === columnId)
+  if (!config) return width
+  return Math.min(config.maxWidth, Math.max(config.minWidth, Math.round(width)))
+}
+
+function parseStoredColumnWidths(rawValue: string | null) {
+  if (!rawValue) return null
+
+  try {
+    const parsed = JSON.parse(rawValue) as {
+      version?: number
+      widths?: Partial<Record<ColumnId, unknown>>
+    }
+    if (parsed.version !== COLUMN_STORAGE_VERSION || !parsed.widths) return null
+
+    return columnConfigs.reduce((widths, column) => {
+      const storedWidth = parsed.widths?.[column.id]
+      widths[column.id] = typeof storedWidth === 'number' && Number.isFinite(storedWidth)
+        ? clampColumnWidth(column.id, storedWidth)
+        : column.defaultWidth
+      return widths
+    }, { ...defaultColumnWidths })
+  } catch {
+    return null
+  }
+}
+
 export default function DeadlineTable({
   projects,
   tasks,
+  allTasks,
   users,
+  userId,
+  getProjectParticipants,
   onTaskClick,
   onTaskDueDateChange,
   onTaskProjectChange,
   onTaskStatusChange,
+  onTaskAssigneeChange,
   savingTaskId,
 }: DeadlineTableProps) {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [draftDueDate, setDraftDueDate] = useState('')
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnId, number>>(
+    defaultColumnWidths
+  )
   const highlightTimerRef = useRef<number | null>(null)
+  const columnWidthsRef = useRef(columnWidths)
+  const resizeStateRef = useRef<ResizeState | null>(null)
+  const deferredSearchQuery = useDeferredValue(searchQuery)
   const today = useMemo(() => startOfDay(new Date()), [])
   const todayKey = format(today, 'yyyy-MM-dd')
   const weekKey = format(addDays(today, 7), 'yyyy-MM-dd')
+
+  const columnStorageKey = userId
+    ? `taskflow:deadline-columns:v${COLUMN_STORAGE_VERSION}:${userId}`
+    : null
+
+  useEffect(() => {
+    columnWidthsRef.current = columnWidths
+  }, [columnWidths])
+
+  useEffect(() => {
+    if (!columnStorageKey) {
+      setColumnWidths(defaultColumnWidths)
+      return
+    }
+
+    const storedWidths = parseStoredColumnWidths(window.localStorage.getItem(columnStorageKey))
+    setColumnWidths(storedWidths || defaultColumnWidths)
+    columnWidthsRef.current = storedWidths || defaultColumnWidths
+  }, [columnStorageKey])
 
   useEffect(() => () => {
     if (highlightTimerRef.current !== null) {
@@ -115,8 +222,33 @@ export default function DeadlineTable({
     () => new Map(users.map((teamUser) => [teamUser.id, teamUser])),
     [users]
   )
+  const participantsByProjectId = useMemo(() => new Map(
+    projects.map((project) => {
+      const participants = getProjectParticipants?.(project.id) || users
+      return [project.id, [...participants].sort((first, second) => (
+        getDisplayName(first).localeCompare(getDisplayName(second), 'it')
+      ))]
+    })
+  ), [getProjectParticipants, projects, users])
+  const normalizedSearchQuery = normalizeSearchValue(deferredSearchQuery)
+  const searchedTasks = useMemo(() => {
+    const sourceTasks = normalizedSearchQuery ? (allTasks || tasks) : tasks
+    if (!normalizedSearchQuery) return sourceTasks
+
+    return sourceTasks.filter((task) => {
+      const project = projectById.get(task.project_id)
+      const assignee = task.assignee_id ? userById.get(task.assignee_id) : undefined
+      return [
+        task.title,
+        task.description,
+        project?.name,
+        assignee?.full_name,
+        assignee?.email,
+      ].some((value) => normalizeSearchValue(value).includes(normalizedSearchQuery))
+    })
+  }, [allTasks, normalizedSearchQuery, projectById, tasks, userById])
   const orderedTasks = useMemo(
-    () => [...tasks].sort((firstTask, secondTask) => {
+    () => [...searchedTasks].sort((firstTask, secondTask) => {
       if (!firstTask.due_date && !secondTask.due_date) {
         return firstTask.title.localeCompare(secondTask.title, 'it')
       }
@@ -125,7 +257,7 @@ export default function DeadlineTable({
       return firstTask.due_date.localeCompare(secondTask.due_date)
         || firstTask.title.localeCompare(secondTask.title, 'it')
     }),
-    [tasks]
+    [searchedTasks]
   )
 
   const dueCounts = useMemo(() => orderedTasks.reduce(
@@ -186,43 +318,195 @@ export default function DeadlineTable({
     }
   }
 
+  const persistColumnWidths = (widths: Record<ColumnId, number>) => {
+    if (!columnStorageKey) return
+    window.localStorage.setItem(columnStorageKey, JSON.stringify({
+      version: COLUMN_STORAGE_VERSION,
+      widths,
+    }))
+  }
+
+  const updateColumnWidth = (columnId: ColumnId, width: number, persist = false) => {
+    const nextWidths = {
+      ...columnWidthsRef.current,
+      [columnId]: clampColumnWidth(columnId, width),
+    }
+    columnWidthsRef.current = nextWidths
+    setColumnWidths(nextWidths)
+    if (persist) persistColumnWidths(nextWidths)
+  }
+
+  const handleResizePointerDown = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    columnId: ColumnId,
+  ) => {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    resizeStateRef.current = {
+      columnId,
+      pointerId: event.pointerId,
+      startWidth: columnWidthsRef.current[columnId],
+      startX: event.clientX,
+    }
+  }
+
+  const handleResizePointerMove = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const resizeState = resizeStateRef.current
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return
+    updateColumnWidth(
+      resizeState.columnId,
+      resizeState.startWidth + event.clientX - resizeState.startX,
+    )
+  }
+
+  const handleResizePointerUp = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const resizeState = resizeStateRef.current
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    resizeStateRef.current = null
+    persistColumnWidths(columnWidthsRef.current)
+  }
+
+  const handleResizeKeyDown = (event: KeyboardEvent<HTMLSpanElement>, columnId: ColumnId) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    const direction = event.key === 'ArrowLeft' ? -1 : 1
+    updateColumnWidth(columnId, columnWidthsRef.current[columnId] + direction * 16, true)
+  }
+
+  const resetColumnWidths = () => {
+    const nextWidths = { ...defaultColumnWidths }
+    columnWidthsRef.current = nextWidths
+    setColumnWidths(nextWidths)
+    persistColumnWidths(nextWidths)
+  }
+
+  const renderResizeHandle = (columnId: ColumnId) => {
+    const config = columnConfigs.find((column) => column.id === columnId)!
+    return (
+      <span
+        role="separator"
+        aria-label={`Ridimensiona colonna ${config.label}`}
+        aria-orientation="vertical"
+        aria-valuemin={config.minWidth}
+        aria-valuemax={config.maxWidth}
+        aria-valuenow={columnWidths[columnId]}
+        tabIndex={0}
+        title="Trascina per ridimensionare. Usa le frecce da tastiera."
+        onPointerDown={(event) => handleResizePointerDown(event, columnId)}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={handleResizePointerUp}
+        onPointerCancel={handleResizePointerUp}
+        onKeyDown={(event) => handleResizeKeyDown(event, columnId)}
+        onDoubleClick={() => updateColumnWidth(columnId, config.defaultWidth, true)}
+        className="group absolute inset-y-0 right-0 z-10 w-3 cursor-col-resize touch-none select-none outline-none"
+      >
+        <span className="absolute inset-y-2 right-1 w-px bg-slate-200 transition-colors group-hover:bg-blue-500 group-focus:bg-blue-500" />
+      </span>
+    )
+  }
+
+  const tableWidth = columnConfigs.reduce(
+    (total, column) => total + columnWidths[column.id],
+    0
+  )
+  const isSearching = Boolean(searchQuery.trim())
+
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
         <div>
           <h3 className="font-semibold text-slate-900">Lista scadenze</h3>
           <p className="text-xs text-slate-500">
             Ordinamento globale: prima le scadenze più vicine, senza raggruppamento per progetto
           </p>
         </div>
-        <p className="text-xs font-medium text-slate-500" aria-live="polite">
-          {dueCounts.overdue} scaduti · {dueCounts.today} oggi · {orderedTasks.length} task
-        </p>
+        <div className="flex min-w-0 flex-col items-end gap-2">
+          <p className="text-xs font-medium text-slate-500" aria-live="polite">
+            {dueCounts.overdue} scaduti · {dueCounts.today} oggi · {orderedTasks.length} task
+          </p>
+          <div className="flex max-w-full flex-wrap justify-end gap-2">
+            <label className="relative min-w-[230px] flex-1 sm:flex-none">
+              <span className="sr-only">Cerca task</span>
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Cerca task, progetto o persona"
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-8 pr-8 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="Cancella ricerca"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              )}
+            </label>
+            <button
+              type="button"
+              onClick={resetColumnWidths}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              title="Ripristina le larghezze iniziali"
+            >
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              Ripristina colonne
+            </button>
+          </div>
+        </div>
       </div>
+
+      {isSearching && (
+        <div className="border-b border-blue-100 bg-blue-50 px-4 py-2 text-xs text-blue-700">
+          La ricerca include anche i task completati o nascosti dai filtri della dashboard.
+        </div>
+      )}
 
       {orderedTasks.length === 0 ? (
         <div className="px-4 py-10 text-center text-sm text-slate-500">
-          Nessun task corrisponde ai filtri selezionati.
+          {isSearching
+            ? `Nessun task trovato per “${searchQuery.trim()}”.`
+            : 'Nessun task corrisponde ai filtri selezionati.'}
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[940px] border-collapse text-sm">
+          <table
+            className="table-fixed border-collapse text-sm"
+            style={{ width: `${tableWidth}px`, minWidth: '100%' }}
+          >
             <colgroup>
-              <col className="w-[22%]" />
-              <col className="w-[30%]" />
-              <col className="w-[18%]" />
-              <col className="w-[16%]" />
-              <col className="w-[14%]" />
+              {columnConfigs.map((column) => (
+                <col key={column.id} style={{ width: `${columnWidths[column.id]}px` }} />
+              ))}
             </colgroup>
             <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-600">
               <tr>
-                <th scope="col" className="border-b border-slate-200 px-4 py-3">Progetto</th>
-                <th scope="col" className="border-b border-slate-200 px-4 py-3">Titolo</th>
-                <th scope="col" aria-sort="ascending" className="border-b border-slate-200 px-4 py-3">
-                  Scadenza ↑
+                <th scope="col" className="relative border-b border-slate-200 px-4 py-3">
+                  Progetto
+                  {renderResizeHandle('project')}
                 </th>
-                <th scope="col" className="border-b border-slate-200 px-4 py-3">Stato</th>
-                <th scope="col" className="border-b border-slate-200 px-4 py-3">In carico a</th>
+                <th scope="col" className="relative border-b border-slate-200 px-4 py-3">
+                  Titolo
+                  {renderResizeHandle('title')}
+                </th>
+                <th scope="col" aria-sort="ascending" className="relative border-b border-slate-200 px-4 py-3">
+                  Scadenza ↑
+                  {renderResizeHandle('dueDate')}
+                </th>
+                <th scope="col" className="relative border-b border-slate-200 px-4 py-3">
+                  Stato
+                  {renderResizeHandle('status')}
+                </th>
+                <th scope="col" className="relative border-b border-slate-200 px-4 py-3">
+                  In carico a
+                  {renderResizeHandle('assignee')}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -232,6 +516,10 @@ export default function DeadlineTable({
                 const dueState = getDueState(task, todayKey, weekKey)
                 const isSaving = savingTaskId === task.id
                 const isHighlighted = highlightedTaskId === task.id
+                const participantOptions = participantsByProjectId.get(task.project_id) || users
+                const assigneeOptions = assignee && !participantOptions.some((user) => user.id === assignee.id)
+                  ? [...participantOptions, assignee]
+                  : participantOptions
 
                 return (
                   <tr
@@ -345,9 +633,24 @@ export default function DeadlineTable({
                         >
                           {getInitials(assignee)}
                         </span>
-                        <span className="truncate" title={getDisplayName(assignee)}>
-                          {getDisplayName(assignee)}
-                        </span>
+                        <select
+                          value={task.assignee_id || ''}
+                          onChange={(event) => {
+                            highlightTask(task.id)
+                            void onTaskAssigneeChange?.(task, event.target.value || null)
+                          }}
+                          disabled={!onTaskAssigneeChange || isSaving}
+                          className="min-w-0 flex-1 truncate rounded-lg border border-transparent bg-transparent px-1 py-1.5 text-sm text-slate-700 hover:border-slate-200 hover:bg-white disabled:cursor-wait disabled:opacity-60"
+                          aria-label={`Cambia assegnatario per ${task.title}`}
+                          title={getDisplayName(assignee)}
+                        >
+                          <option value="">Non assegnato</option>
+                          {assigneeOptions.map((availableUser) => (
+                            <option key={availableUser.id} value={availableUser.id}>
+                              {getDisplayName(availableUser)}
+                            </option>
+                          ))}
+                        </select>
                       </span>
                     </td>
                   </tr>
