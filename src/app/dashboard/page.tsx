@@ -545,6 +545,59 @@ export default function DashboardPage() {
     }
   }
 
+  const handleTaskAssigneeChange = async (task: Task, assigneeId: string | null) => {
+    const currentAssigneeId = task.assignee_id || null
+    if (assigneeId === currentAssigneeId) return
+
+    if (
+      assigneeId
+      && !getProjectParticipants(task.project_id).some((person) => person.id === assigneeId)
+    ) {
+      setErrorMsg('L’assegnatario deve partecipare al progetto del task.')
+      return
+    }
+
+    setErrorMsg('')
+    setSuccessMsg('')
+    setSavingTaskId(task.id)
+    setTasks((currentTasks) => currentTasks.map((currentTask) => (
+      currentTask.id === task.id ? { ...currentTask, assignee_id: assigneeId } : currentTask
+    )))
+    setSelectedTask((currentTask) => (
+      currentTask?.id === task.id ? { ...currentTask, assignee_id: assigneeId } : currentTask
+    ))
+
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .update({ assignee_id: assigneeId, updated_at: new Date().toISOString() })
+        .eq('id', task.id)
+        .select('id')
+        .single()
+
+      if (error || !data) throw error || new Error('Task non trovato')
+
+      const assignee = assigneeId
+        ? teamUsers.find((teamUser) => teamUser.id === assigneeId)
+        : null
+      const assigneeName = assignee?.full_name?.trim() || assignee?.email?.trim()
+      setSuccessMsg(
+        assigneeName
+          ? `Task assegnato a ${assigneeName}.`
+          : 'Task impostato come non assegnato.'
+      )
+    } catch (error) {
+      setErrorMsg(
+        `Non sono riuscito ad aggiornare l’assegnatario: ${
+          error instanceof Error ? error.message : 'riprova tra poco'
+        }`
+      )
+      await loadData()
+    } finally {
+      setSavingTaskId(null)
+    }
+  }
+
   const handleUndoTaskStatus = async () => {
     if (!undoTaskStatus) return
     const task = tasks.find((currentTask) => currentTask.id === undoTaskStatus.taskId)
@@ -762,11 +815,15 @@ export default function DashboardPage() {
               <DeadlineTable
                 projects={projects}
                 tasks={visibleTasks}
+                allTasks={tasks}
                 users={teamUsers}
+                userId={user?.id}
+                getProjectParticipants={getProjectParticipants}
                 onTaskClick={setSelectedTask}
                 onTaskDueDateChange={handleTaskDueDateChange}
                 onTaskProjectChange={handleTaskProjectChange}
                 onTaskStatusChange={handleTaskStatusChange}
+                onTaskAssigneeChange={handleTaskAssigneeChange}
                 savingTaskId={savingTaskId}
               />
             )}
