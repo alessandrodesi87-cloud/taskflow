@@ -7,6 +7,7 @@ import { Project, Task } from '@/types'
 import GanttChart from '@/components/gantt/GanttChart'
 import DeadlineTable from '@/components/planning/DeadlineTable'
 import AppHeader from '@/components/AppHeader'
+import ItalianDateInput from '@/components/ui/ItalianDateInput'
 import type { User as AuthUser } from '@supabase/supabase-js'
 
 interface ProjectMemberWithUser {
@@ -844,11 +845,11 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium mb-1">Data inizio</label>
-                  <input type="date" value={pStart} onChange={e => setPStart(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                  <ItalianDateInput value={pStart} onChange={setPStart} ariaLabel="Data inizio progetto" required />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Data fine</label>
-                  <input type="date" value={pEnd} onChange={e => setPEnd(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                  <ItalianDateInput value={pEnd} onChange={setPEnd} ariaLabel="Data fine progetto" required />
                 </div>
               </div>
               <div className="flex gap-3 justify-end">
@@ -893,11 +894,11 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium mb-1">Inizio</label>
-                  <input type="date" value={tStart} onChange={e => setTStart(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                  <ItalianDateInput value={tStart} onChange={setTStart} ariaLabel="Data inizio task" required />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Scadenza</label>
-                  <input type="date" value={tDue} onChange={e => setTDue(e.target.value)} className="w-full px-3 py-2 border rounded-md" required />
+                  <ItalianDateInput value={tDue} onChange={setTDue} ariaLabel="Scadenza task" required />
                 </div>
               </div>
               <div>
@@ -942,11 +943,11 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="text-sm font-semibold text-gray-700">Data inizio</span>
-                  <input type="date" value={selectedProject.start_date} onChange={(event) => setSelectedProject({ ...selectedProject, start_date: event.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
+                  <ItalianDateInput value={selectedProject.start_date} onChange={(startDate) => setSelectedProject({ ...selectedProject, start_date: startDate })} ariaLabel="Data inizio progetto" className="mt-1" required />
                 </label>
                 <label className="block">
                   <span className="text-sm font-semibold text-gray-700">Data fine</span>
-                  <input type="date" value={selectedProject.end_date} onChange={(event) => setSelectedProject({ ...selectedProject, end_date: event.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
+                  <ItalianDateInput value={selectedProject.end_date} onChange={(endDate) => setSelectedProject({ ...selectedProject, end_date: endDate })} ariaLabel="Data fine progetto" className="mt-1" required />
                 </label>
               </div>
               <div className="grid grid-cols-[1fr_auto] gap-3">
@@ -1059,11 +1060,11 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="text-sm font-semibold text-gray-700">Data inizio</span>
-                  <input type="date" value={selectedTask.start_date} onChange={(event) => setSelectedTask({ ...selectedTask, start_date: event.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
+                  <ItalianDateInput value={selectedTask.start_date} onChange={(startDate) => setSelectedTask({ ...selectedTask, start_date: startDate })} ariaLabel="Data inizio task" className="mt-1" required />
                 </label>
                 <label className="block">
                   <span className="text-sm font-semibold text-gray-700">Scadenza</span>
-                  <input type="date" value={selectedTask.due_date} onChange={(event) => setSelectedTask({ ...selectedTask, due_date: event.target.value })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" required />
+                  <ItalianDateInput value={selectedTask.due_date} onChange={(dueDate) => setSelectedTask({ ...selectedTask, due_date: dueDate })} ariaLabel="Scadenza task" className="mt-1" required />
                 </label>
               </div>
               {selectedTask.email_origin && (
