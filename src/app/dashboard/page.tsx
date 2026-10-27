@@ -8,6 +8,7 @@ import GanttChart from '@/components/gantt/GanttChart'
 import DeadlineTable from '@/components/planning/DeadlineTable'
 import AppHeader from '@/components/AppHeader'
 import ItalianDateInput from '@/components/ui/ItalianDateInput'
+import TaskDependencies from '@/components/tasks/TaskDependencies'
 import type { User as AuthUser } from '@supabase/supabase-js'
 
 interface ProjectMemberWithUser {
@@ -1073,6 +1074,7 @@ export default function DashboardPage() {
                   <ul className="mt-2 space-y-1">{tasks.filter((task) => task.parent_task_id === selectedTask.id).map((child) => <li key={child.id}><button type="button" onClick={() => setSelectedTask(child)} className="text-left text-sm text-blue-700 hover:underline">{child.title} · {child.status === 'done' ? 'Completato' : child.status === 'in_progress' ? 'In corso' : 'Da fare'}</button></li>)}</ul>
                 </section>
               )}
+              <TaskDependencies task={selectedTask} tasks={tasks} />
               {selectedTask.email_origin && (
                 <div className="rounded-lg bg-blue-50 p-3 text-sm text-blue-800">Origine: {selectedTask.email_origin}</div>
               )}
