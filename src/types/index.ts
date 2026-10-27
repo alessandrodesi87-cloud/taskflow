@@ -45,6 +45,10 @@ export interface Task {
   parent_task_id?: string | null
   status: 'todo' | 'in_progress' | 'done'
   priority: 'low' | 'medium' | 'high' | 'urgent'
+  approval_status?: 'pending' | 'approved'
+  created_by_assistant?: boolean
+  approved_at?: string | null
+  approved_by?: string | null
   tags?: string[]
   google_task_id?: string
   email_origin?: string
