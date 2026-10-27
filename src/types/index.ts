@@ -41,7 +41,8 @@ export interface Task {
   creator_id: string
   assignee_id?: string | null
   start_date: string
-  due_date: string
+  due_date: string | null
+  parent_task_id?: string | null
   status: 'todo' | 'in_progress' | 'done'
   priority: 'low' | 'medium' | 'high' | 'urgent'
   tags?: string[]
