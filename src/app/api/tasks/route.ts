@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
         title,
         description,
         start_date,
-        due_date,
+        due_date: due_date || null,
         priority,
         email_origin,
         owner_id: session.user.id,

@@ -29,7 +29,7 @@ interface DeadlineTableProps {
   userId?: string
   getProjectParticipants?: (projectId: string) => TeamUser[]
   onTaskClick?: (task: Task) => void
-  onTaskDueDateChange?: (task: Task, dueDate: string) => void | Promise<void>
+  onTaskDueDateChange?: (task: Task, dueDate: string | null) => void | Promise<void>
   onTaskProjectChange?: (task: Task, projectId: string) => void | Promise<void>
   onTaskStatusChange?: (task: Task, status: Task['status']) => void | Promise<void>
   onTaskAssigneeChange?: (task: Task, assigneeId: string | null) => void | Promise<void>
@@ -87,7 +87,7 @@ const statusClasses: Record<Task['status'], string> = {
   done: 'border-emerald-200 bg-emerald-50 text-emerald-700',
 }
 
-function parseTaskDate(value: string) {
+function parseTaskDate(value: string | null) {
   if (!value) return null
   const date = parseISO(value)
   return isValid(date) ? startOfDay(date) : null
@@ -220,6 +220,10 @@ export default function DeadlineTable({
     () => new Map(projects.map((project) => [project.id, project])),
     [projects]
   )
+  const taskById = useMemo(
+    () => new Map((allTasks || tasks).map((task) => [task.id, task])),
+    [allTasks, tasks]
+  )
   const userById = useMemo(
     () => new Map(users.map((teamUser) => [teamUser.id, teamUser])),
     [users]
@@ -283,8 +287,8 @@ export default function DeadlineTable({
     }, 1600)
   }
 
-  const updateDueDate = async (task: Task, dueDate: string) => {
-    if (!parseTaskDate(dueDate) || dueDate === task.due_date) {
+  const updateDueDate = async (task: Task, dueDate: string | null) => {
+    if ((dueDate && !parseTaskDate(dueDate)) || dueDate === task.due_date) {
       setEditingTaskId(null)
       return
     }
@@ -295,7 +299,7 @@ export default function DeadlineTable({
   }
 
   const beginDateEdit = (task: Task) => {
-    setDraftDueDate(task.due_date)
+    setDraftDueDate(task.due_date || '')
     setDraftDueDateValid(Boolean(parseTaskDate(task.due_date)))
     setEditingTaskId(task.id)
   }
@@ -517,6 +521,7 @@ export default function DeadlineTable({
               {orderedTasks.map((task) => {
                 const project = projectById.get(task.project_id)
                 const assignee = task.assignee_id ? userById.get(task.assignee_id) : undefined
+                const isSubtask = Boolean(task.parent_task_id && taskById.has(task.parent_task_id))
                 const dueState = getDueState(task, todayKey, weekKey)
                 const isSaving = savingTaskId === task.id
                 const isHighlighted = highlightedTaskId === task.id
@@ -567,7 +572,7 @@ export default function DeadlineTable({
                         }`}
                         title={`${task.title} · Apri dettagli`}
                       >
-                        {task.title}
+                        {isSubtask ? `Sub-task: ${task.title}` : task.title}
                       </button>
                     </td>
                     <td className="px-4 py-2.5">
@@ -584,6 +589,15 @@ export default function DeadlineTable({
                             className="!w-[150px] py-1.5"
                             ariaLabel={`Nuova scadenza per ${task.title}`}
                           />
+                          {task.due_date ? (
+                            <button
+                              type="button"
+                              onClick={() => void updateDueDate(task, null)}
+                              className="rounded-md px-2 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                            >
+                              Rimuovi
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => confirmDateEdit(task)}

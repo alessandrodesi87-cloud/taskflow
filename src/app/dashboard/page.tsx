@@ -93,6 +93,7 @@ export default function DashboardPage() {
   const [tDue, setTDue] = useState('')
   const [tPriority, setTPriority] = useState<Task['priority']>('medium')
   const [tAssignee, setTAssignee] = useState('')
+  const [tSubtasks, setTSubtasks] = useState('')
 
   const loadData = useCallback(async () => {
     const { data: projectsData, error: projectsError } = await supabase
@@ -231,8 +232,8 @@ export default function DashboardPage() {
       if (assigneeFilter === 'mine' && task.assignee_id !== user?.id) return false
       if (assigneeFilter === 'unassigned' && task.assignee_id) return false
       if (priorityFilter !== 'all' && task.priority !== priorityFilter) return false
-      if (dueFilter === 'overdue' && (task.status === 'done' || task.due_date >= today)) return false
-      if (dueFilter === 'upcoming' && (task.due_date < today || task.due_date > upcoming)) return false
+      if (dueFilter === 'overdue' && (task.status === 'done' || !task.due_date || task.due_date >= today)) return false
+      if (dueFilter === 'upcoming' && (!task.due_date || task.due_date < today || task.due_date > upcoming)) return false
       return true
     })
   }, [assigneeFilter, dueFilter, priorityFilter, projectFilter, showCompleted, statusFilter, tasks, user?.id])
@@ -280,24 +281,17 @@ export default function DashboardPage() {
       return
     }
 
-    const { error } = await supabase.from('tasks').insert({
-      project_id: tProject,
-      title: tTitle,
-      description: tDesc,
-      start_date: tStart,
-      due_date: tDue,
-      priority: tPriority,
-      status: 'todo',
-      owner_id: user.id,
-      creator_id: user.id,
-      assignee_id: tAssignee || null,
-    })
-    if (error) {
-      setErrorMsg(`Errore creazione task: ${error.message}`)
-      return
+    const taskPayload = { project_id: tProject, title: tTitle.trim(), description: tDesc, start_date: tStart, due_date: tDue || null, priority: tPriority, status: 'todo', assignee_id: tAssignee || null }
+    const subtaskTitles = tSubtasks.split(/\r?\n/).map((title) => title.trim()).filter(Boolean)
+    if (subtaskTitles.length > 0) {
+      const { error } = await supabase.rpc('create_task_with_subtasks', { p_task: taskPayload, p_subtask_titles: subtaskTitles })
+      if (error) { setErrorMsg(`Errore creazione task e sotto-task: ${error.message}`); return }
+    } else {
+      const { error } = await supabase.from('tasks').insert({ ...taskPayload, owner_id: user.id, creator_id: user.id })
+      if (error) { setErrorMsg(`Errore creazione task: ${error.message}`); return }
     }
     setShowTaskModal(false)
-    setTTitle(''); setTDesc(''); setTDue(''); setTAssignee('')
+    setTTitle(''); setTDesc(''); setTDue(''); setTAssignee(''); setTSubtasks('')
     setSuccessMsg('Task creato correttamente.')
     await loadData()
   }
@@ -400,7 +394,7 @@ export default function DashboardPage() {
     setErrorMsg('')
     setSuccessMsg('')
 
-    if (selectedTask.due_date < selectedTask.start_date) {
+    if (selectedTask.due_date && selectedTask.due_date < selectedTask.start_date) {
       setErrorMsg('La scadenza non può precedere la data di inizio.')
       return
     }
@@ -422,7 +416,7 @@ export default function DashboardPage() {
         description: selectedTask.description || null,
         assignee_id: assigneeId,
         start_date: selectedTask.start_date,
-        due_date: selectedTask.due_date,
+        due_date: selectedTask.due_date || null,
         status: selectedTask.status,
         priority: selectedTask.priority,
         updated_at: new Date().toISOString(),
@@ -441,7 +435,7 @@ export default function DashboardPage() {
     await loadData()
   }
 
-  const handleTaskDateChange = async (task: Task, startDate: string, dueDate: string) => {
+  const handleTaskDateChange = async (task: Task, startDate: string, dueDate: string | null) => {
     setErrorMsg('')
     setSavingTaskId(task.id)
     setTasks(currentTasks =>
@@ -480,8 +474,8 @@ export default function DashboardPage() {
     }
   }
 
-  const handleTaskDueDateChange = async (task: Task, dueDate: string) => {
-    const startDate = task.start_date > dueDate ? dueDate : task.start_date
+  const handleTaskDueDateChange = async (task: Task, dueDate: string | null) => {
+    const startDate = dueDate && task.start_date > dueDate ? dueDate : task.start_date
     await handleTaskDateChange(task, startDate, dueDate)
   }
 
@@ -876,6 +870,11 @@ export default function DashboardPage() {
                 <textarea value={tDesc} onChange={e => setTDesc(e.target.value)} className="w-full px-3 py-2 border rounded-md" rows={2} />
               </div>
               <div>
+                <label className="block text-sm font-medium mb-1">Sotto-task (uno per riga, facoltativi)</label>
+                <textarea value={tSubtasks} onChange={(event) => setTSubtasks(event.target.value)} className="w-full rounded-md border px-3 py-2" rows={3} placeholder="Preparare materiali, condividere con il team" />
+                <p className="mt-1 text-xs text-gray-500">Vengono creati insieme al task e ne ereditano progetto, date e assegnatario.</p>
+              </div>
+              <div>
                 <label className="block text-sm font-medium mb-1">Progetto</label>
                 <select value={tProject} onChange={e => { setTProject(e.target.value); setTAssignee('') }} className="w-full px-3 py-2 border rounded-md" required>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -898,7 +897,7 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Scadenza</label>
-                  <ItalianDateInput value={tDue} onChange={setTDue} ariaLabel="Scadenza task" required />
+                  <ItalianDateInput value={tDue} onChange={setTDue} ariaLabel="Scadenza task" />
                 </div>
               </div>
               <div>
@@ -1064,9 +1063,16 @@ export default function DashboardPage() {
                 </label>
                 <label className="block">
                   <span className="text-sm font-semibold text-gray-700">Scadenza</span>
-                  <ItalianDateInput value={selectedTask.due_date} onChange={(dueDate) => setSelectedTask({ ...selectedTask, due_date: dueDate })} ariaLabel="Scadenza task" className="mt-1" required />
+                  <ItalianDateInput value={selectedTask.due_date || ''} onChange={(dueDate) => setSelectedTask({ ...selectedTask, due_date: dueDate || null })} ariaLabel="Scadenza task" className="mt-1" />
                 </label>
               </div>
+              {(selectedTask.parent_task_id || tasks.some((task) => task.parent_task_id === selectedTask.id)) && (
+                <section className="rounded-lg border border-slate-200 p-4">
+                  <h4 className="text-sm font-semibold text-slate-800">Sotto-task</h4>
+                  {selectedTask.parent_task_id && <p className="mt-1 text-sm text-slate-600">Task padre: {tasks.find((task) => task.id === selectedTask.parent_task_id)?.title || 'non disponibile'}</p>}
+                  <ul className="mt-2 space-y-1">{tasks.filter((task) => task.parent_task_id === selectedTask.id).map((child) => <li key={child.id}><button type="button" onClick={() => setSelectedTask(child)} className="text-left text-sm text-blue-700 hover:underline">{child.title} · {child.status === 'done' ? 'Completato' : child.status === 'in_progress' ? 'In corso' : 'Da fare'}</button></li>)}</ul>
+                </section>
+              )}
               {selectedTask.email_origin && (
                 <div className="rounded-lg bg-blue-50 p-3 text-sm text-blue-800">Origine: {selectedTask.email_origin}</div>
               )}

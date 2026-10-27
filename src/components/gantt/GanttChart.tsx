@@ -100,7 +100,8 @@ const statusColors: Record<Task['status'], string> = {
   done: 'bg-emerald-600',
 }
 
-function parsePlanningDate(value: string) {
+function parsePlanningDate(value: string | null) {
+  if (!value) return null
   const date = parseISO(value)
   return isValid(date) ? startOfDay(date) : null
 }
@@ -270,7 +271,7 @@ export default function GanttChart({
       ? differenceInCalendarDays(today, dateRange.minDate)
       : undefined
 
-  const getBarPosition = (start: string, end: string) => {
+  const getBarPosition = (start: string, end: string | null) => {
     const startDate = parsePlanningDate(start) ?? dateRange.minDate
     const endDate = parsePlanningDate(end) ?? startDate
     const startIndex = differenceInCalendarDays(startDate, dateRange.minDate)
@@ -488,11 +489,12 @@ export default function GanttChart({
     void onTaskDateChange(task, nextStartDate, nextDueDate)
   }
 
-  const formatRange = (start: string, end: string) => {
+  const formatRange = (start: string, end: string | null) => {
     const startDate = parsePlanningDate(start)
     const endDate = parsePlanningDate(end)
 
-    if (!startDate || !endDate) return 'Date non disponibili'
+    if (!startDate) return 'Date non disponibili'
+    if (!endDate) return `${format(startDate, 'd MMM', { locale: it })} - senza scadenza`
 
     return `${format(startDate, 'd MMM', { locale: it })} – ${format(endDate, 'd MMM', {
       locale: it,
@@ -720,10 +722,10 @@ export default function GanttChart({
                         <button
                           type="button"
                           onClick={() => openTask(task)}
-                          className="block w-full truncate text-left text-sm font-medium text-slate-800 hover:text-blue-700"
+                          className={`block w-full truncate text-left text-sm font-medium text-slate-800 hover:text-blue-700 ${task.parent_task_id ? "pl-4" : ""}`}
                           title={`${task.title} · Apri dettagli`}
                         >
-                          {task.title}
+                          {task.parent_task_id ? `Sub-task: ${task.title}` : task.title}
                         </button>
                       </div>
 
@@ -735,17 +737,16 @@ export default function GanttChart({
                         todayIndex={todayIndex}
                       >
                         <div
-                          className={`absolute top-1/2 z-[2] h-6 -translate-y-1/2 touch-none rounded-md text-white shadow-sm transition hover:-translate-y-[55%] hover:shadow-md ${
-                            activeDrag ? 'ring-2 ring-blue-200 ring-offset-2' : ''
-                          } ${savingTaskId === task.id ? 'opacity-60' : ''} ${
-                            statusColors[task.status]
-                          }`}
+                          className={`absolute top-1/2 z-[2] ${task.due_date
+                            ? 'h-6 -translate-y-1/2 touch-none rounded-md text-white shadow-sm transition hover:-translate-y-[55%] hover:shadow-md'
+                            : 'h-3 w-3 -translate-y-1/2 rounded-full border-2 border-slate-400 bg-white'
+                          } ${activeDrag ? 'ring-2 ring-blue-200 ring-offset-2' : ''} ${savingTaskId === task.id ? 'opacity-60' : ''} ${task.due_date ? statusColors[task.status] : ''}`}
                           style={{
                             left: displayedTaskBar.left,
-                            width: Math.max(displayedTaskBar.width, onTaskDateChange ? 32 : 8),
+                            width: task.due_date ? Math.max(displayedTaskBar.width, onTaskDateChange ? 32 : 8) : 12,
                           }}
                         >
-                          {onTaskDateChange ? (
+                          {onTaskDateChange && task.due_date ? (
                             <button
                               type="button"
                               onPointerDown={(event) =>
@@ -769,7 +770,7 @@ export default function GanttChart({
                           <button
                             type="button"
                             onClick={() => openTask(task)}
-                            onPointerDown={(event) => beginTaskDrag(event, task, 'move')}
+                            onPointerDown={task.due_date ? (event) => beginTaskDrag(event, task, 'move') : undefined}
                             onPointerMove={(event) => moveTaskDrag(event, task)}
                             onPointerUp={(event) => finishTaskDrag(event, task)}
                             onPointerCancel={(event) => cancelTaskDrag(event, task)}
@@ -777,19 +778,19 @@ export default function GanttChart({
                             disabled={savingTaskId === task.id}
                             aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
                             className={`absolute inset-y-0 overflow-hidden px-2 text-left text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white ${
-                              onTaskDateChange
+                              onTaskDateChange && task.due_date
                                 ? 'left-2.5 right-2.5 cursor-grab active:cursor-grabbing'
                                 : 'inset-x-0'
                             }`}
                             title={`${task.title} · ${statusLabels[task.status]} · ${formatRange(
                               displayedStartDate,
                               displayedDueDate
-                            )}${onTaskDateChange ? ' · Trascina il centro per spostare' : ''}`}
+                            )}${onTaskDateChange && task.due_date ? ' · Trascina il centro per spostare' : ''}`}
                           >
                             <span className="block truncate">{task.title}</span>
                           </button>
 
-                          {onTaskDateChange ? (
+                          {onTaskDateChange && task.due_date ? (
                             <button
                               type="button"
                               onPointerDown={(event) => beginTaskDrag(event, task, 'resize-end')}
