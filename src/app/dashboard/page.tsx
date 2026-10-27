@@ -36,7 +36,7 @@ interface CurrentProfile {
 type AssigneeFilter = 'all' | 'mine' | 'unassigned'
 type DueFilter = 'all' | 'overdue' | 'upcoming'
 type PlanningView = 'gantt' | 'deadlines'
-type DashboardSection = 'tasks' | 'approvals'
+type DashboardSection = 'tasks' | 'approvals' | 'workload'
 
 interface UndoTaskStatus {
   taskId: string
@@ -248,6 +248,39 @@ export default function DashboardPage() {
       .sort((a, b) => b.created_at.localeCompare(a.created_at)),
     [tasks, user?.id]
   )
+
+  const workloadRows = useMemo(() => {
+    const today = localDateKey()
+    const sevenDaysAhead = new Date()
+    sevenDaysAhead.setDate(sevenDaysAhead.getDate() + 7)
+    const lastIncludedDate = localDateKey(sevenDaysAhead)
+
+    return projects.flatMap((project) => {
+      const openTasks = tasks.filter((task) => (
+        task.project_id === project.id
+        && task.status !== 'done'
+        && task.approval_status !== 'pending'
+      ))
+      const activeParentIds = new Set(
+        openTasks.map((task) => task.parent_task_id).filter((id): id is string => Boolean(id))
+      )
+      const workUnits = openTasks.filter((task) => !activeParentIds.has(task.id))
+
+      return getProjectParticipants(project.id).map((person) => {
+        const assignedTasks = workUnits.filter((task) => task.assignee_id === person.id)
+        return {
+          key: `${project.id}:${person.id}`,
+          projectName: project.name,
+          memberName: person.full_name || person.email || 'Membro senza nome',
+          openCount: assignedTasks.length,
+          dueNextSevenDays: assignedTasks.filter((task) => (
+            task.due_date !== null && task.due_date >= today && task.due_date <= lastIncludedDate
+          )).length,
+          withoutDueDate: assignedTasks.filter((task) => task.due_date === null).length,
+        }
+      })
+    })
+  }, [getProjectParticipants, projects, tasks])
 
   const ganttProjects = useMemo(() => visibleProjects.filter((project) => {
     const hasVisibleTasks = visibleTasks.some((task) => task.project_id === project.id)
@@ -723,11 +756,18 @@ export default function DashboardPage() {
         )}
 
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-3xl font-bold">{dashboardSection === 'approvals' ? 'Da approvare' : 'I tuoi Progetti'}</h2>
+          <h2 className="text-3xl font-bold">{dashboardSection === 'approvals' ? 'Da approvare' : dashboardSection === 'workload' ? 'Carico per persona' : 'I tuoi Progetti'}</h2>
           <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={() => setDashboardSection(dashboardSection === 'tasks' ? 'approvals' : 'tasks')} className={`rounded px-4 py-2 font-semibold ${dashboardSection === 'approvals' ? 'bg-amber-500 text-white hover:bg-amber-600' : 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'}`}>
-              {dashboardSection === 'approvals' ? 'Torna ai progetti' : `Da approvare${pendingApprovalTasks.length ? ` (${pendingApprovalTasks.length})` : ''}`}
-            </button>
+            {dashboardSection === 'tasks' ? (
+              <>
+                <button type="button" onClick={() => setDashboardSection('approvals')} className="rounded border border-amber-300 bg-amber-50 px-4 py-2 font-semibold text-amber-900 hover:bg-amber-100">
+                  Da approvare{pendingApprovalTasks.length ? ` (${pendingApprovalTasks.length})` : ''}
+                </button>
+                <button type="button" onClick={() => setDashboardSection('workload')} className="rounded border border-blue-200 bg-blue-50 px-4 py-2 font-semibold text-blue-900 hover:bg-blue-100">Carico</button>
+              </>
+            ) : (
+              <button type="button" onClick={() => setDashboardSection('tasks')} className="rounded border border-gray-300 bg-white px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50">Torna ai progetti</button>
+            )}
             {dashboardSection === 'tasks' && projects.length > 0 && (
               <button onClick={() => { setTProject(projects[0].id); setTAssignee(''); setShowTaskModal(true) }} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">+ Nuovo Task</button>
             )}
@@ -758,6 +798,42 @@ export default function DashboardPage() {
                   </article>
                 )
               })}
+            </div>
+          )
+        ) : dashboardSection === 'workload' ? (
+          workloadRows.length === 0 ? (
+            <div className="rounded-lg bg-white py-12 text-center shadow">
+              <p className="font-semibold text-gray-800">Nessun membro o progetto disponibile</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="border-b border-gray-100 px-4 py-3 text-sm text-gray-600">
+                Task aperti assegnati a ciascun membro. I task da approvare e quelli senza responsabile non sono attribuiti; con sotto-task attivi si contano i figli e non il padre.
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <tr>
+                      <th className="px-4 py-3">Progetto</th>
+                      <th className="px-4 py-3">Membro</th>
+                      <th className="px-4 py-3 text-right">Task aperti</th>
+                      <th className="px-4 py-3 text-right">Scadono entro 7 giorni</th>
+                      <th className="px-4 py-3 text-right">Senza scadenza</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {workloadRows.map((row) => (
+                      <tr key={row.key}>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{row.projectName}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.memberName}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.openCount}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.dueNextSevenDays}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.withoutDueDate}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )
         ) : projects.length === 0 ? (
