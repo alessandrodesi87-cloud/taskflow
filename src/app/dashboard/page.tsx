@@ -9,6 +9,7 @@ import DeadlineTable from '@/components/planning/DeadlineTable'
 import AppHeader from '@/components/AppHeader'
 import ItalianDateInput from '@/components/ui/ItalianDateInput'
 import TaskDependencies from '@/components/tasks/TaskDependencies'
+import TaskComments from '@/components/tasks/TaskComments'
 import type { User as AuthUser } from '@supabase/supabase-js'
 
 interface ProjectMemberWithUser {
@@ -1217,6 +1218,9 @@ export default function DashboardPage() {
               </div>
               <button type="submit" className="w-full rounded-lg bg-green-600 px-4 py-2.5 font-semibold text-white hover:bg-green-700">{selectedTask.approval_status === 'pending' ? 'Salva e approva' : 'Salva task'}</button>
             </form>
+            <div className="px-6 pb-6">
+              <TaskComments task={selectedTask} userId={user?.id} users={teamUsers} />
+            </div>
           </aside>
         </div>
       )}
