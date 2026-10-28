@@ -8,6 +8,8 @@ import GanttChart from '@/components/gantt/GanttChart'
 import DeadlineTable from '@/components/planning/DeadlineTable'
 import AppHeader from '@/components/AppHeader'
 import ItalianDateInput from '@/components/ui/ItalianDateInput'
+import TaskDependencies from '@/components/tasks/TaskDependencies'
+import TaskComments from '@/components/tasks/TaskComments'
 import type { User as AuthUser } from '@supabase/supabase-js'
 
 interface ProjectMemberWithUser {
@@ -35,6 +37,7 @@ interface CurrentProfile {
 type AssigneeFilter = 'all' | 'mine' | 'unassigned'
 type DueFilter = 'all' | 'overdue' | 'upcoming'
 type PlanningView = 'gantt' | 'deadlines'
+type DashboardSection = 'tasks' | 'approvals' | 'workload'
 
 interface UndoTaskStatus {
   taskId: string
@@ -76,6 +79,7 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | Task['status']>('all')
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<string[]>([])
   const [planningView, setPlanningView] = useState<PlanningView>('deadlines')
+  const [dashboardSection, setDashboardSection] = useState<DashboardSection>('tasks')
   const [undoTaskStatus, setUndoTaskStatus] = useState<UndoTaskStatus | null>(null)
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const router = useRouter()
@@ -226,6 +230,7 @@ export default function DashboardPage() {
     const upcoming = localDateKey(upcomingDate)
 
     return tasks.filter((task) => {
+      if (task.approval_status === 'pending') return false
       if (projectFilter !== 'all' && task.project_id !== projectFilter) return false
       if (statusFilter !== 'all' && task.status !== statusFilter) return false
       if (statusFilter === 'all' && !showCompleted && task.status === 'done') return false
@@ -237,6 +242,46 @@ export default function DashboardPage() {
       return true
     })
   }, [assigneeFilter, dueFilter, priorityFilter, projectFilter, showCompleted, statusFilter, tasks, user?.id])
+
+  const pendingApprovalTasks = useMemo(
+    () => tasks
+      .filter((task) => task.approval_status === 'pending' && task.owner_id === user?.id)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    [tasks, user?.id]
+  )
+
+  const workloadRows = useMemo(() => {
+    const today = localDateKey()
+    const sevenDaysAhead = new Date()
+    sevenDaysAhead.setDate(sevenDaysAhead.getDate() + 7)
+    const lastIncludedDate = localDateKey(sevenDaysAhead)
+
+    return projects.flatMap((project) => {
+      const openTasks = tasks.filter((task) => (
+        task.project_id === project.id
+        && task.status !== 'done'
+        && task.approval_status !== 'pending'
+      ))
+      const activeParentIds = new Set(
+        openTasks.map((task) => task.parent_task_id).filter((id): id is string => Boolean(id))
+      )
+      const workUnits = openTasks.filter((task) => !activeParentIds.has(task.id))
+
+      return getProjectParticipants(project.id).map((person) => {
+        const assignedTasks = workUnits.filter((task) => task.assignee_id === person.id)
+        return {
+          key: `${project.id}:${person.id}`,
+          projectName: project.name,
+          memberName: person.full_name || person.email || 'Membro senza nome',
+          openCount: assignedTasks.length,
+          dueNextSevenDays: assignedTasks.filter((task) => (
+            task.due_date !== null && task.due_date >= today && task.due_date <= lastIncludedDate
+          )).length,
+          withoutDueDate: assignedTasks.filter((task) => task.due_date === null).length,
+        }
+      })
+    })
+  }, [getProjectParticipants, projects, tasks])
 
   const ganttProjects = useMemo(() => visibleProjects.filter((project) => {
     const hasVisibleTasks = visibleTasks.some((task) => task.project_id === project.id)
@@ -432,6 +477,23 @@ export default function DashboardPage() {
 
     setSelectedTask(data as Task)
     setSuccessMsg('Task aggiornato.')
+    await loadData()
+  }
+
+  const handleApproveTask = async (task: Task) => {
+    if (!user || task.owner_id !== user.id || task.approval_status !== 'pending') return
+    setErrorMsg('')
+    setSuccessMsg('')
+    const { error } = await supabase
+      .from('tasks')
+      .update({ approval_status: 'approved' })
+      .eq('id', task.id)
+      .eq('owner_id', user.id)
+    if (error) {
+      setErrorMsg(`Approvazione non riuscita: ${error.message}`)
+      return
+    }
+    setSuccessMsg('Task approvato e inserito nella pipeline normale.')
     await loadData()
   }
 
@@ -694,17 +756,88 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-3xl font-bold">I tuoi Progetti</h2>
-          <div className="flex gap-3">
-            {projects.length > 0 && (
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-3xl font-bold">{dashboardSection === 'approvals' ? 'Da approvare' : dashboardSection === 'workload' ? 'Carico per persona' : 'I tuoi Progetti'}</h2>
+          <div className="flex flex-wrap gap-3">
+            {dashboardSection === 'tasks' ? (
+              <>
+                <button type="button" onClick={() => setDashboardSection('approvals')} className="rounded border border-amber-300 bg-amber-50 px-4 py-2 font-semibold text-amber-900 hover:bg-amber-100">
+                  Da approvare{pendingApprovalTasks.length ? ` (${pendingApprovalTasks.length})` : ''}
+                </button>
+                <button type="button" onClick={() => setDashboardSection('workload')} className="rounded border border-blue-200 bg-blue-50 px-4 py-2 font-semibold text-blue-900 hover:bg-blue-100">Carico</button>
+              </>
+            ) : (
+              <button type="button" onClick={() => setDashboardSection('tasks')} className="rounded border border-gray-300 bg-white px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50">Torna ai progetti</button>
+            )}
+            {dashboardSection === 'tasks' && projects.length > 0 && (
               <button onClick={() => { setTProject(projects[0].id); setTAssignee(''); setShowTaskModal(true) }} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">+ Nuovo Task</button>
             )}
-            <button onClick={() => setShowProjectModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">+ Nuovo Progetto</button>
+            {dashboardSection === 'tasks' && <button onClick={() => setShowProjectModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">+ Nuovo Progetto</button>}
           </div>
         </div>
 
-        {projects.length === 0 ? (
+        {dashboardSection === 'approvals' ? (
+          pendingApprovalTasks.length === 0 ? (
+            <div className="rounded-lg bg-white py-12 text-center shadow">
+              <p className="font-semibold text-gray-800">Nessun task da approvare</p>
+              <p className="mt-2 text-sm text-gray-500">I task creati dall’assistente compariranno qui prima di entrare nella pipeline normale.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pendingApprovalTasks.map((task) => {
+                const project = projects.find((item) => item.id === task.project_id)
+                const parent = task.parent_task_id ? tasks.find((item) => item.id === task.parent_task_id) : null
+                return (
+                  <article key={task.id} className="flex flex-col gap-4 rounded-xl border border-amber-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                    <button type="button" onClick={() => setSelectedTask(task)} className="min-w-0 text-left">
+                      <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">Da approvare · {task.parent_task_id ? 'Sotto-task' : 'Task'}</span>
+                      <h3 className="mt-2 truncate text-lg font-semibold text-gray-900">{task.title}</h3>
+                      <p className="mt-1 text-sm text-gray-600">Progetto: {project?.name || 'Non disponibile'}{parent ? ` · Sotto-task di: ${parent.title}` : ''}</p>
+                      <p className="mt-1 text-xs text-gray-500">Creato il {new Intl.DateTimeFormat('it-IT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(task.created_at))}</p>
+                    </button>
+                    <button type="button" onClick={() => void handleApproveTask(task)} className="shrink-0 rounded-lg bg-green-600 px-4 py-2.5 font-semibold text-white hover:bg-green-700">Approva</button>
+                  </article>
+                )
+              })}
+            </div>
+          )
+        ) : dashboardSection === 'workload' ? (
+          workloadRows.length === 0 ? (
+            <div className="rounded-lg bg-white py-12 text-center shadow">
+              <p className="font-semibold text-gray-800">Nessun membro o progetto disponibile</p>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="border-b border-gray-100 px-4 py-3 text-sm text-gray-600">
+                Task aperti assegnati a ciascun membro. I task da approvare e quelli senza responsabile non sono attribuiti; con sotto-task attivi si contano i figli e non il padre.
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <tr>
+                      <th className="px-4 py-3">Progetto</th>
+                      <th className="px-4 py-3">Membro</th>
+                      <th className="px-4 py-3 text-right">Task aperti</th>
+                      <th className="px-4 py-3 text-right">Scadono entro 7 giorni</th>
+                      <th className="px-4 py-3 text-right">Senza scadenza</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {workloadRows.map((row) => (
+                      <tr key={row.key}>
+                        <td className="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{row.projectName}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-gray-700">{row.memberName}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.openCount}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.dueNextSevenDays}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{row.withoutDueDate}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        ) : projects.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-lg shadow">
             <p className="text-gray-500 mb-4">Non hai ancora progetti</p>
             <button onClick={() => setShowProjectModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Crea il primo progetto</button>
@@ -1066,6 +1199,9 @@ export default function DashboardPage() {
                   <ItalianDateInput value={selectedTask.due_date || ''} onChange={(dueDate) => setSelectedTask({ ...selectedTask, due_date: dueDate || null })} ariaLabel="Scadenza task" className="mt-1" />
                 </label>
               </div>
+              {selectedTask.created_by_assistant && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm font-medium text-violet-900">Creato dall’assistente</div>
+              )}
               {(selectedTask.parent_task_id || tasks.some((task) => task.parent_task_id === selectedTask.id)) && (
                 <section className="rounded-lg border border-slate-200 p-4">
                   <h4 className="text-sm font-semibold text-slate-800">Sotto-task</h4>
@@ -1073,14 +1209,18 @@ export default function DashboardPage() {
                   <ul className="mt-2 space-y-1">{tasks.filter((task) => task.parent_task_id === selectedTask.id).map((child) => <li key={child.id}><button type="button" onClick={() => setSelectedTask(child)} className="text-left text-sm text-blue-700 hover:underline">{child.title} · {child.status === 'done' ? 'Completato' : child.status === 'in_progress' ? 'In corso' : 'Da fare'}</button></li>)}</ul>
                 </section>
               )}
+              <TaskDependencies task={selectedTask} tasks={tasks} />
               {selectedTask.email_origin && (
                 <div className="rounded-lg bg-blue-50 p-3 text-sm text-blue-800">Origine: {selectedTask.email_origin}</div>
               )}
               <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-500">
                 Creato il {new Intl.DateTimeFormat('it-IT', { dateStyle: 'medium' }).format(new Date(selectedTask.created_at))} · ultimo aggiornamento {new Intl.DateTimeFormat('it-IT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(selectedTask.updated_at))}
               </div>
-              <button type="submit" className="w-full rounded-lg bg-green-600 px-4 py-2.5 font-semibold text-white hover:bg-green-700">Salva task</button>
+              <button type="submit" className="w-full rounded-lg bg-green-600 px-4 py-2.5 font-semibold text-white hover:bg-green-700">{selectedTask.approval_status === 'pending' ? 'Salva e approva' : 'Salva task'}</button>
             </form>
+            <div className="px-6 pb-6">
+              <TaskComments task={selectedTask} userId={user?.id} users={teamUsers} />
+            </div>
           </aside>
         </div>
       )}
